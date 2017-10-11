@@ -17,29 +17,32 @@ module ApiHelpers
   #   => "/api/v2/issues?foo=bar&private_token=..."
   #
   # Returns the relative path to the requested API resource
-  def api(path, user = nil)
-    "/api/#{API::API.version}#{path}" +
+  def api(path, user = nil, version: API::API.version, personal_access_token: nil, oauth_access_token: nil)
+    "/api/#{version}#{path}" +
 
       # Normalize query string
       (path.index('?') ? '' : '?') +
 
+      if personal_access_token.present?
+        "&private_token=#{personal_access_token.token}"
+      elsif oauth_access_token.present?
+        "&access_token=#{oauth_access_token.token}"
       # Append private_token if given a User object
-      (user.respond_to?(:private_token) ?
-        "&private_token=#{user.private_token}" : "")
+      elsif user.respond_to?(:private_token)
+        "&private_token=#{user.private_token}"
+      else
+        ''
+      end
   end
 
-  def ci_api(path, user = nil)
-    "/ci/api/v1/#{path}" +
-
-      # Normalize query string
-      (path.index('?') ? '' : '?') +
-
-      # Append private_token if given a User object
-      (user.respond_to?(:private_token) ?
-        "&private_token=#{user.private_token}" : "")
-  end
-
-  def json_response
-    @_json_response ||= JSON.parse(response.body)
+  # Temporary helper method for simplifying V3 exclusive API specs
+  def v3_api(path, user = nil, personal_access_token: nil, oauth_access_token: nil)
+    api(
+      path,
+      user,
+      version: 'v3',
+      personal_access_token: personal_access_token,
+      oauth_access_token: oauth_access_token
+    )
   end
 end

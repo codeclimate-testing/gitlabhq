@@ -2,30 +2,60 @@
  *  Application Header
  *
  */
+
 header {
-  transition-duration: .3s;
+  @include new-style-dropdown;
+
+  transition: padding $sidebar-transition-duration;
 
   &.navbar-empty {
-    background: #FFF;
-    border-bottom: 1px solid #EEE;
+    height: $header-height;
+    background: $white-light;
+    border-bottom: 1px solid $white-normal;
 
     .center-logo {
       margin: 8px 0;
       text-align: center;
 
+      .tanuki-logo,
       img {
-        height: 32px;
+        height: 36px;
       }
     }
   }
 
   &.navbar-gitlab {
-    padding: 0 20px;
-    z-index: 100;
+    padding: 0 16px;
+    z-index: 1000;
     margin-bottom: 0;
     min-height: $header-height;
-    background-color: #fff;
+    background-color: $gray-light;
     border: none;
+    border-bottom: 1px solid $border-color;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    color: $gl-text-color-secondary;
+    border-radius: 0;
+
+    @media (max-width: $screen-xs-min) {
+      padding: 0 16px;
+    }
+
+    &.with-horizontal-nav {
+      border-bottom: 0;
+
+      .navbar-border {
+        height: 1px;
+        position: absolute;
+        right: 0;
+        left: 0;
+        bottom: -1px;
+        background-color: $border-color;
+        opacity: 0;
+      }
+    }
 
     .container-fluid {
       width: 100% !important;
@@ -33,114 +63,286 @@ header {
       padding: 0;
 
       .nav > li > a {
-        color: #7f8fa4;
+        color: currentColor;
         font-size: 18px;
         padding: 0;
-        margin: ($header-height - 28) / 2 0;
-        margin-left: 10px;
+        margin: (($header-height - 28) / 2) 3px;
+        margin-left: 8px;
         height: 28px;
-        width: 28px;
+        min-width: 32px;
         line-height: 28px;
         text-align: center;
 
-        &:hover, &:focus, &:active {
-          background-color: #FFF;
+        &.header-user-dropdown-toggle {
+          margin-left: 14px;
+
+          &:hover,
+          &:focus,
+          &:active {
+            .header-user-avatar {
+              border-color: rgba($avatar-border, .2);
+            }
+          }
+        }
+
+        &:hover,
+        &:focus,
+        &:active {
+          background-color: transparent;
+          color: $gl-text-color;
+
+          svg {
+            fill: $gl-text-color;
+          }
+        }
+
+        .fa-caret-down {
+          font-size: 14px;
+        }
+
+        .fa-chevron-down {
+          position: relative;
+          top: -3px;
+          font-size: 10px;
+        }
+      }
+
+      .user-counter {
+        svg {
+          margin-right: 3px;
         }
       }
 
       .navbar-toggle {
-        color: #666;
-        margin: 6px 0;
+        color: $nav-toggle-gray;
+        margin: 5px 0;
         border-radius: 0;
-        position: absolute;
-        right: 2px;
+        right: -10px;
+        padding: 6px 10px;
 
         &:hover {
-          background-color: #EEE;
+          background-color: $white-normal;
         }
+
         &.active {
-          color: #7f8fa4;
+          color: $gl-text-color-secondary;
         }
       }
+    }
+  }
+
+  &.navbar-gitlab-new {
+    .close-icon {
+      display: none;
+    }
+
+    .menu-expanded {
+      .more-icon {
+        display: none;
+      }
+
+      .close-icon {
+        display: block;
+      }
+    }
+  }
+
+  .global-dropdown {
+    position: absolute;
+    left: -10px;
+
+    .badge {
+      font-size: 11px;
+    }
+
+    li {
+      &.active a {
+        font-weight: $gl-font-weight-bold;
+      }
+    }
+  }
+
+  .global-dropdown-toggle {
+    margin: 7px 0;
+    font-size: 18px;
+    padding: 6px 10px;
+    border: none;
+    background-color: $gray-light;
+
+    &:hover {
+      background-color: $white-normal;
+    }
+
+    &:focus {
+      outline: none;
+      background-color: $white-normal;
     }
   }
 
   .header-content {
-    height: $header-height;
+    display: flex;
+    justify-content: space-between;
+    position: relative;
+    min-height: $header-height;
+    padding-left: 30px;
 
-    .title {
-      margin: 0;
-      overflow: hidden;
-      font-size: 19px;
-      line-height: $header-height;
-      font-weight: normal;
-      color: #4c4e54;
-      text-overflow: ellipsis;
-      vertical-align: top;
-      white-space: nowrap;
+    &.menu-expanded {
+      @media (max-width: $screen-xs-max) {
+        .header-logo,
+        .title-container {
+          display: none;
+        }
 
-      a {
-        color: #4c4e54;
-        &:hover {
-          text-decoration: underline;
+        .navbar-collapse {
+          display: block;
         }
       }
     }
 
-    .navbar-collapse {
-      float: right;
-      border-top: none;
+    .dropdown-menu {
+      margin-top: -5px;
     }
-  }
 
-  .search {
-    margin-right: 10px;
-    margin-left: 10px;
-    margin-top: ($header-height - 36) / 2;
+    .header-logo {
+      display: inline-block;
+      margin: 0 12px 0 2px;
+      position: relative;
+      top: 10px;
+      transition-duration: .3s;
 
-    form {
+      svg,
+      img {
+        height: 28px;
+      }
+
+      &:hover {
+        cursor: pointer;
+      }
+    }
+
+    .group-name-toggle {
+      margin: 3px 5px;
+    }
+
+    .group-title {
+      &.is-hidden {
+        .hidable:not(:last-of-type) {
+          display: none;
+        }
+      }
+    }
+
+    .title-container {
+      display: flex;
+      align-items: flex-start;
+      flex: 1 1 auto;
+      padding-top: 14px;
+      overflow: hidden;
+    }
+
+    .title {
+      position: relative;
+      padding-right: 20px;
       margin: 0;
-      padding: 0;
+      font-size: 18px;
+      line-height: 22px;
+      display: inline-block;
+      font-weight: $gl-font-weight-normal;
+      color: $gl-text-color;
+      vertical-align: top;
+      white-space: nowrap;
+
+      &.wrap {
+        white-space: normal;
+      }
+
+      &.initializing {
+        opacity: 0;
+      }
+
+      a {
+        color: currentColor;
+
+        &:hover {
+          text-decoration: underline;
+          color: $gl-header-nav-hover-color;
+        }
+      }
+
+      .dropdown-toggle-caret {
+        color: $gl-text-color;
+        border: transparent;
+        background: transparent;
+        position: absolute;
+        top: 2px;
+        right: 3px;
+        width: 12px;
+        line-height: 19px;
+        padding: 0;
+        font-size: 10px;
+        text-align: center;
+        cursor: pointer;
+
+        &:hover {
+          color: $gl-header-nav-hover-color;
+        }
+      }
+
+      .project-item-select {
+        right: auto;
+        left: 0;
+      }
     }
 
-    .search-input {
-      width: 220px;
-      background-image: image-url("icon-search.png");
-      background-repeat: no-repeat;
-      background-position: 195px;
-      @include input-big;
+    .navbar-collapse {
+      flex: 0 0 auto;
+      border-top: none;
+      padding: 0;
 
-      &:focus {
-        @include box-shadow(none);
-        outline: none;
-        border-color: #DDD;
-        background-color: #FFF;
+      @media (max-width: $screen-xs-max) {
+        flex: 1 1 auto;
       }
     }
   }
 
+  .project-item-select-holder {
+    display: inline;
+  }
+
   .impersonation i {
-    color: $red-normal;
+    color: $red-500;
   }
 }
 
-@mixin collapsed-header {
-  margin-left: $sidebar_collapsed_width;
+.with-performance-bar header.navbar-gitlab {
+  top: $performance-bar-height;
 }
 
-@media (max-width: $screen-md-max) {
-  .header-collapsed, .header-expanded {
-    @include collapsed-header;
-  }
-}
+.navbar-nav {
+  li {
+    .badge {
+      position: inherit;
+      font-weight: $gl-font-weight-normal;
+      margin-left: -6px;
+      font-size: 11px;
+      color: $white-light;
+      padding: 0 5px;
+      line-height: 12px;
+      border-radius: 7px;
+      box-shadow: 0 1px 0 rgba($gl-header-color, .2);
 
-@media(min-width: $screen-md-max) {
-  .header-collapsed {
-    @include collapsed-header;
-  }
+      &.issues-count {
+        background-color: $green-500;
+      }
 
-  .header-expanded {
-    margin-left: $sidebar_width;
+      &.merge-requests-count {
+        background-color: $orange-600;
+      }
+
+      &.todos-count {
+        background-color: $blue-500;
+      }
+    }
   }
 }
 
@@ -149,25 +351,57 @@ header {
     font-size: 18px;
 
     .navbar-nav {
-      margin: 0px;
-      float: none !important;
-
-      .visible-xs, .visable-sm {
-        display: table-cell !important;
-      }
+      display: table;
+      table-layout: fixed;
+      width: 100%;
+      margin: 0;
+      text-align: right;
     }
 
     .navbar-collapse {
       padding-left: 5px;
 
-      li {
-        display: table-cell;
-        width: 1%;
+      .nav > li:not(.hidden-xs) {
+        display: table-cell !important;
+        width: 25%;
 
         a {
-          margin-left: 8px !important;
+          margin-right: 8px;
         }
       }
     }
   }
+
+  .header-user-dropdown-toggle {
+    text-align: center;
+  }
+
+  .header-user-avatar {
+    float: none;
+  }
+}
+
+.header-user {
+  .dropdown-menu-nav {
+    width: auto;
+    min-width: 140px;
+    margin-top: -5px;
+    color: $gl-text-color;
+    left: auto;
+
+    .current-user {
+      padding: 5px 18px;
+
+      .user-name {
+        display: block;
+      }
+    }
+  }
+}
+
+.header-user-avatar {
+  float: left;
+  margin-right: 5px;
+  border-radius: 50%;
+  border: 1px solid $avatar-border;
 }

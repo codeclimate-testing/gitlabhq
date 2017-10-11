@@ -1,24 +1,58 @@
 class Explore::ProjectsController < Explore::ApplicationController
+  include ParamsBackwardCompatibility
+
+  before_action :set_non_archived_param
+
   def index
-    @projects = ProjectsFinder.new.execute(current_user)
-    @tags = @projects.tags_on(:tags)
-    @projects = @projects.tagged_with(params[:tag]) if params[:tag].present?
-    @projects = @projects.where(visibility_level: params[:visibility_level]) if params[:visibility_level].present?
-    @projects = @projects.non_archived
-    @projects = @projects.search(params[:search]) if params[:search].present?
-    @projects = @projects.sort(@sort = params[:sort])
-    @projects = @projects.includes(:namespace).page(params[:page]).per(PER_PAGE)
+    params[:sort] ||= 'latest_activity_desc'
+    @sort = params[:sort]
+    @projects = load_projects
+
+    respond_to do |format|
+      format.html
+      format.json do
+        render json: {
+          html: view_to_html_string("dashboard/projects/_projects", locals: { projects: @projects })
+        }
+      end
+    end
   end
 
   def trending
-    @trending_projects = TrendingProjectsFinder.new.execute(current_user)
-    @trending_projects = @trending_projects.non_archived
-    @trending_projects = @trending_projects.page(params[:page]).per(PER_PAGE)
+    params[:trending] = true
+    @sort = params[:sort]
+    @projects = load_projects
+
+    respond_to do |format|
+      format.html
+      format.json do
+        render json: {
+          html: view_to_html_string("dashboard/projects/_projects", locals: { projects: @projects })
+        }
+      end
+    end
   end
 
   def starred
-    @starred_projects = ProjectsFinder.new.execute(current_user)
-    @starred_projects = @starred_projects.reorder('star_count DESC')
-    @starred_projects = @starred_projects.page(params[:page]).per(PER_PAGE)
+    @projects = load_projects.reorder('star_count DESC')
+
+    respond_to do |format|
+      format.html
+      format.json do
+        render json: {
+          html: view_to_html_string("dashboard/projects/_projects", locals: { projects: @projects })
+        }
+      end
+    end
+  end
+
+  private
+
+  def load_projects
+    ProjectsFinder.new(current_user: current_user, params: params)
+      .execute
+      .includes(:route, namespace: :route)
+      .page(params[:page])
+      .without_count
   end
 end

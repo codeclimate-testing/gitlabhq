@@ -1,6 +1,11 @@
 module SharedDiffNote
   include Spinach::DSL
   include RepoHelpers
+  include WaitForRequests
+
+  after do
+    wait_for_requests if javascript_test?
+  end
 
   step 'I cancel the diff comment' do
     page.within(diff_file_selector) do
@@ -23,27 +28,26 @@ module SharedDiffNote
     page.within(diff_file_selector) do
       click_diff_line(sample_commit.line_code)
 
-      page.within("form[rel$='#{sample_commit.line_code}']") do
+      page.within("form[data-line-code='#{sample_commit.line_code}']") do
         fill_in "note[note]", with: "Typo, please fix"
-        find(".js-comment-button").trigger("click")
-        sleep 0.05
+        find(".js-comment-button").click
       end
     end
   end
 
   step 'I leave a diff comment in a parallel view on the left side like "Old comment"' do
-    click_parallel_diff_line(sample_commit.line_code, 'old')
-    page.within("#{diff_file_selector} form[rel$='#{sample_commit.line_code}']") do
+    click_parallel_diff_line(sample_commit.del_line_code, 'old')
+    page.within("#{diff_file_selector} form[data-line-code='#{sample_commit.del_line_code}']") do
       fill_in "note[note]", with: "Old comment"
-      find(".js-comment-button").trigger("click")
+      find(".js-comment-button").click
     end
   end
 
   step 'I leave a diff comment in a parallel view on the right side like "New comment"' do
     click_parallel_diff_line(sample_commit.line_code, 'new')
-    page.within("#{diff_file_selector} form[rel$='#{sample_commit.line_code}']") do
+    page.within("#{diff_file_selector} form[data-line-code='#{sample_commit.line_code}']") do
       fill_in "note[note]", with: "New comment"
-      find(".js-comment-button").trigger("click")
+      find(".js-comment-button").click
     end
   end
 
@@ -51,7 +55,7 @@ module SharedDiffNote
     page.within(diff_file_selector) do
       click_diff_line(sample_commit.line_code)
 
-      page.within("form[rel$='#{sample_commit.line_code}']") do
+      page.within("form[data-line-code='#{sample_commit.line_code}']") do
         fill_in "note[note]", with: "Should fix it :smile:"
         find('.js-md-preview-button').click
       end
@@ -62,7 +66,7 @@ module SharedDiffNote
     page.within(diff_file_selector) do
       click_diff_line(sample_commit.del_line_code)
 
-      page.within("form[rel$='#{sample_commit.del_line_code}']") do
+      page.within("form[data-line-code='#{sample_commit.del_line_code}']") do
         fill_in "note[note]", with: "DRY this up"
         find('.js-md-preview-button').click
       end
@@ -87,9 +91,20 @@ module SharedDiffNote
     end
   end
 
+  step 'I write a diff comment like ":smile:"' do
+    page.within(diff_file_selector) do
+      click_diff_line(sample_commit.line_code)
+
+      page.within("form[data-line-code='#{sample_commit.line_code}']") do
+        fill_in 'note[note]', with: ':smile:'
+        click_button('Comment')
+      end
+    end
+  end
+
   step 'I submit the diff comment' do
     page.within(diff_file_selector) do
-      click_button("Add Comment")
+      click_button("Comment")
     end
   end
 
@@ -114,7 +129,7 @@ module SharedDiffNote
 
   step 'I should only see one diff form' do
     page.within(diff_file_selector) do
-      expect(page).to have_css("form.new_note", count: 1)
+      expect(page).to have_css("form.new-note", count: 1)
     end
   end
 
@@ -144,18 +159,14 @@ module SharedDiffNote
 
   step 'I should see a discussion reply button' do
     page.within(diff_file_selector) do
-      expect(page).to have_button('Reply')
+      expect(page).to have_button('Reply...')
     end
   end
 
   step 'I should see a temporary diff comment form' do
     page.within(diff_file_selector) do
-      expect(page).to have_css(".js-temp-notes-holder form.new_note")
+      expect(page).to have_css(".js-temp-notes-holder form.new-note")
     end
-  end
-
-  step 'I should see add a diff comment button' do
-    expect(page).to have_css('.js-add-diff-note-button', visible: true)
   end
 
   step 'I should see an empty diff comment form' do
@@ -185,7 +196,7 @@ module SharedDiffNote
   step 'The diff comment preview tab should display rendered Markdown' do
     page.within(diff_file_selector) do
       find('.js-md-preview-button').click
-      expect(find('.js-md-preview')).to have_css('img.emoji', visible: true)
+      expect(find('.js-md-preview')).to have_css('gl-emoji', visible: true)
     end
   end
 
@@ -194,6 +205,12 @@ module SharedDiffNote
       expect(page).to have_css('.js-md-preview', visible: true, count: 2)
       expect(page).to have_content('Should fix it')
       expect(page).to have_content('DRY this up')
+    end
+  end
+
+  step 'I should see a diff comment with an emoji image' do
+    page.within("#{diff_file_selector} .note") do
+      expect(page).to have_xpath("//gl-emoji[@data-name='smile']")
     end
   end
 
@@ -210,10 +227,12 @@ module SharedDiffNote
   end
 
   def click_diff_line(code)
-    find("button[data-line-code='#{code}']").click
+    find(".line_holder[id='#{code}'] td:nth-of-type(1)").trigger 'mouseover'
+    find(".line_holder[id='#{code}'] button").trigger 'click'
   end
 
   def click_parallel_diff_line(code, line_type)
-    find("button[data-line-code='#{code}'][data-line-type='#{line_type}']").trigger('click')
+    find(".line_holder.parallel td[id='#{code}']").find(:xpath, 'preceding-sibling::*[1][self::td]').trigger 'mouseover'
+    find(".line_holder.parallel button[data-line-code='#{code}']").trigger 'click'
   end
 end

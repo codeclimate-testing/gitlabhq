@@ -1,16 +1,31 @@
+- @no_container = true
+- @can_bulk_update = can?(current_user, :admin_merge_request, @project)
+- merge_project = can?(current_user, :create_merge_request, @project) ? @project : (current_user && current_user.fork_of(@project))
+- new_merge_request_path = project_new_merge_request_path(merge_project) if merge_project
+
 - page_title "Merge Requests"
-= render "header_title"
+
+- content_for :page_specific_javascripts do
+  = webpack_bundle_tag 'common_vue'
+  = webpack_bundle_tag 'filtered_search'
 
 = render 'projects/last_push'
-.project-issuable-filter
-  .controls
-    = render 'shared/issuable/search_form', path: namespace_project_merge_requests_path(@project.namespace, @project)
 
-    - if can? current_user, :create_merge_request, @project
-      .pull-left.hidden-xs
-        = link_to new_namespace_project_merge_request_path(@project.namespace, @project), class: "btn btn-new", title: "New Merge Request" do
-          %i.fa.fa-plus
-          New Merge Request
-  = render 'shared/issuable/filter', type: :merge_requests
-.merge-requests-holder
-  = render 'merge_requests'
+- if @project.merge_requests.exists?
+  %div{ class: container_class }
+    - if show_auto_devops_callout?(@project)
+      = render 'shared/auto_devops_callout'
+    .top-area
+      = render 'shared/issuable/nav', type: :merge_requests
+      .nav-controls
+        = render "projects/merge_requests/nav_btns", merge_project: merge_project, new_merge_request_path: new_merge_request_path
+
+    = render 'shared/issuable/search_bar', type: :merge_requests
+
+    - if @can_bulk_update
+      = render 'shared/issuable/bulk_update_sidebar', type: :merge_requests
+
+    .merge-requests-holder
+      = render 'merge_requests'
+- else
+  = render 'shared/empty_states/merge_requests', button_path: new_merge_request_path

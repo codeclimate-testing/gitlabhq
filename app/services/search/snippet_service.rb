@@ -7,8 +7,13 @@ module Search
     end
 
     def execute
-      snippet_ids = Snippet.accessible_to(current_user).pluck(:id)
-      Gitlab::SnippetSearchResults.new(snippet_ids, params[:search])
+      snippets = SnippetsFinder.new(current_user).execute
+
+      Gitlab::SnippetSearchResults.new(snippets, params[:search])
+    end
+
+    def scope
+      @scope ||= %w[snippet_titles].delete(params[:scope]) { 'snippet_blobs' }
     end
   end
 end

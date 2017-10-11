@@ -1,90 +1,102 @@
-.user-calendar-activities {
-  .calendar_onclick_hr {
-    padding: 0;
-    margin: 10px 0;
+.calender-block {
+  padding-left: 0;
+  padding-right: 0;
+  border-top: 0;
+  direction: rtl;
+
+  @media (min-width: $screen-sm-min) and (max-width: $screen-md-max) {
+    overflow-x: auto;
   }
+}
+
+.user-calendar-activities {
+  direction: ltr;
 
   .str-truncated {
     max-width: 70%;
   }
 
-  .text-expander {
-    background: #eee;
-    color: #555;
-    padding: 0 5px;
-    cursor: pointer;
-    margin-left: 4px;
-    &:hover {
-      background-color: #ddd;
-    }
+  .user-calendar-activities-loading {
+    font-size: 24px;
   }
 }
-/**
-* This overwrites the default values of the cal-heatmap gem
-*/
-.calendar {
-  .qi {
-    background-color: #999;
-    fill: #fff;
+
+.user-calendar {
+  text-align: center;
+
+  .calendar {
+    display: inline-block;
+  }
+}
+
+.user-contrib-cell {
+  &:hover {
+    cursor: pointer;
+    stroke: $black;
+  }
+}
+
+.user-contrib-text {
+  font-size: 12px;
+  fill: $calendar-user-contrib-text;
+}
+
+.calendar-hint {
+  margin-top: -23px;
+  float: right;
+  font-size: 12px;
+  direction: ltr;
+}
+
+.pika-single.gitlab-theme {
+  .pika-label {
+    color: $gl-text-color-secondary;
+    font-size: 14px;
+    font-weight: $gl-font-weight-normal;
   }
 
-  .q1 {
-    background-color: #dae289;
-    fill: #ededed;
+  th {
+    padding: 2px 0;
+    color: $note-disabled-comment-color;
+    font-weight: $gl-font-weight-normal;
+    text-transform: lowercase;
+    border-top: 1px solid $calendar-border-color;
   }
 
-  .q2 {
-    background-color: #cedb9c;
-    fill: #ACD5F2;
+  abbr {
+    cursor: default;
   }
 
-  .q3 {
-    background-color: #b5cf6b;
-    fill: #7FA8D1;
-  }
+  td {
+    border: 1px solid $calendar-border-color;
 
-  .q4 {
-    background-color: #637939;
-    fill: #49729B;
-  }
-
-  .q5 {
-    background-color: #3b6427;
-    fill: #254E77;
-  }
-
-  .domain-background {
-    fill: none;
-    shape-rendering: crispedges;
-  }
-
-  .ch-tooltip {
-    position: absolute;
-    display: none;
-    margin-top: 22px;
-    margin-left: 1px;
-    font-size: 13px;
-    padding: 3px;
-    font-weight: 550;
-    background-color: #222;
-    span {
-      position: absolute;
-      width: 200px;
-      text-align: center;
-      visibility: hidden;
-      border-radius: 10px;
-      &:after {
-        content: '';
-        position: absolute;
-        top: 100%;
-        left: 50%;
-        margin-left: -8px;
-        width: 0;
-        height: 0;
-        border-top: 8px solid #000000;
-        border-right: 8px solid transparent;
-        border-left: 8px solid transparent;
-      }
+    &:first-child {
+      border-left: 0;
     }
+
+    &:last-child {
+      border-right: 0;
+    }
+  }
+
+  .pika-day {
+    border-radius: 0;
+    background-color: $white-light;
+    text-align: center;
+  }
+
+  .is-today {
+    .pika-day {
+      color: inherit;
+      font-weight: $gl-font-weight-normal;
+    }
+  }
+
+  .is-selected .pika-day,
+  .pika-day:hover,
+  .is-today .pika-day {
+    background: $gray-darker;
+    color: $gl-text-color;
+    box-shadow: none;
   }
 }

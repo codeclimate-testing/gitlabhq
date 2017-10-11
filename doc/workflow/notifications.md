@@ -4,9 +4,9 @@ GitLab has a notification system in place to notify a user of events that are im
 
 ## Notification settings
 
-Under user profile page you can find the notification settings.
+You can find notification settings under the user profile.
 
-![notification settings](notifications/settings.png)
+![notification settings](img/notification_global_settings.png)
 
 Notification settings are divided into three groups:
 
@@ -20,6 +20,7 @@ Each of these settings have levels of notification:
 * Participating - receive notifications from related resources
 * Watch - receive notifications from projects or groups user is a member of
 * Global - notifications as set at the global settings
+* Custom - user will receive notifications when mentioned, is participant and custom selected events.
 
 #### Global Settings
 
@@ -31,17 +32,23 @@ anything that is set at Global Settings.
 
 #### Group Settings
 
+![notification settings](img/notification_group_settings.png)
+
 Group Settings are taking precedence over Global Settings but are on a level below Project Settings.
 This means that you can set a different level of notifications per group while still being able
 to have a finer level setting per project.
 Organization like this is suitable for users that belong to different groups but don't have the
 same need for being notified for every group they are member of.
+These settings can be configured on group page under the name of the group. It will be the dropdown with the bell icon. They can also be configured on the user profile notifications dropdown.
 
 #### Project Settings
+
+![notification settings](img/notification_project_settings.png)
 
 Project Settings are at the top level and any setting placed at this level will take precedence of any
 other setting.
 This is suitable for users that have different needs for notifications per project basis.
+These settings can be configured on project page under the name of the project. It will be the dropdown with the bell icon. They can also be configured on the user profile notifications dropdown.
 
 ## Notification events
 
@@ -55,7 +62,7 @@ Below is the table of events users can be notified of:
 | User added to project        | User                                                              | Sent when user is added to project |
 | Project access level changed | User                                                              | Sent when user project access level is changed |
 | User added to group          | User                                                              | Sent when user is added to group |
-| Group access level changed   | User                                                              | Sent when user group access level is changed | 
+| Group access level changed   | User                                                              | Sent when user group access level is changed |
 | Project moved                | Project members [1]                                               | [1] not disabled |
 
 ### Issue / Merge Request events
@@ -64,13 +71,14 @@ In all of the below cases, the notification will be sent to:
 - Participants:
   - the author and assignee of the issue/merge request
   - authors of comments on the issue/merge request
-  - anyone mentioned by `@username` in the issue/merge request description
+  - anyone mentioned by `@username` in the issue/merge request title or description
   - anyone mentioned by `@username` in any of the comments on the issue/merge request
 
     ...with notification level "Participating" or higher
 
-- Watchers: project members with notification level "Watch"
+- Watchers: users with notification level "Watch"
 - Subscribers: anyone who manually subscribed to the issue/merge request
+- Custom: Users with notification level "custom" who turned on notifications for any of the events present in the table below
 
 | Event                  | Sent to |
 |------------------------|---------|
@@ -84,6 +92,13 @@ In all of the below cases, the notification will be sent to:
 | Reopen merge request   | |
 | Merge merge request    | |
 | New comment            | The above, plus anyone mentioned by `@username` in the comment, with notification level "Mention" or higher |
+| Failed pipeline        | The author of the pipeline |
+| Successful pipeline    | The author of the pipeline, if they have the custom notification setting for successful pipelines set |
+
+
+In addition, if the title or description of an Issue or Merge Request is
+changed, notifications will be sent to any **new** mentions by `@username` as
+if they had been mentioned in the original text.
 
 You won't receive notifications for Issues, Merge Requests or Milestones
 created by yourself. You will only receive automatic notifications when

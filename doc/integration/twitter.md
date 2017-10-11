@@ -7,14 +7,14 @@ To enable the Twitter OmniAuth provider you must register your application with 
 1.  Select "Create new app"
 
 1.  Fill in the application details.
-    - Name: This can be anything. Consider something like "\<Organization\>'s GitLab" or "\<Your Name\>'s GitLab" or
+    - Name: This can be anything. Consider something like `<Organization>'s GitLab` or `<Your Name>'s GitLab` or
     something else descriptive.
     - Description: Create a description.
     - Website: The URL to your GitLab installation. 'https://gitlab.example.com'
     - Callback URL: 'https://gitlab.example.com/users/auth/twitter/callback'
     - Agree to the "Developer Agreement".
 
-    ![Twitter App Details](twitter_app_details.png)
+    ![Twitter App Details](img/twitter_app_details.png)
 1.  Select "Create your Twitter application."
 
 1.  Select the "Settings" tab.
@@ -27,7 +27,7 @@ To enable the Twitter OmniAuth provider you must register your application with 
 
 1.  You should now see an API key and API secret (see screenshot). Keep this page open as you continue configuration.
 
-    ![Twitter app](twitter_app_api_keys.png)
+    ![Twitter app](img/twitter_app_api_keys.png)
 
 1.  On your GitLab server, open the configuration file.
 
@@ -37,7 +37,7 @@ To enable the Twitter OmniAuth provider you must register your application with 
       sudo editor /etc/gitlab/gitlab.rb
     ```
 
-    For instalations from source:
+    For installations from source:
 
     ```sh
       cd /home/git/gitlab
@@ -74,6 +74,10 @@ To enable the Twitter OmniAuth provider you must register your application with 
 
 1.  Save the configuration file.
 
-1.  Restart GitLab for the changes to take effect.
+1.  [Reconfigure][] or [restart GitLab][] for the changes to take effect if you
+    installed GitLab via Omnibus or from source respectively.
 
 On the sign in page there should now be a Twitter icon below the regular sign in form. Click the icon to begin the authentication process. Twitter will ask the user to sign in and authorize the GitLab application. If everything goes well the user will be returned to GitLab and will be signed in.
+
+[reconfigure]: ../administration/restart_gitlab.md#omnibus-gitlab-reconfigure
+[restart GitLab]: ../administration/restart_gitlab.md#installations-from-source

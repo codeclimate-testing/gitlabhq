@@ -59,14 +59,11 @@ Feature: Profile
     When I unsuccessfully change my password
     Then I should see a password error message
 
-  Scenario: I reset my token
-    Given I visit profile account page
-    Then I reset my token
-    And I should see new token
-
   Scenario: I visit history tab
-    Given I have activity
-    When I visit Audit Log page
+    Given I logout
+    And I sign in via the UI
+    And I have activity
+    When I visit Authentication log page
     Then I should see my activity
 
   Scenario: I visit my user page
@@ -76,8 +73,7 @@ Feature: Profile
 
   Scenario: I can manage application
     Given I visit profile applications page
-    Then I click on new application button
-    And I should see application form
+    Then I should see application form
     Then I fill application form out and submit
     And I see application
     Then I click edit

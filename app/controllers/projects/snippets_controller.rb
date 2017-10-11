@@ -1,9 +1,15 @@
 class Projects::SnippetsController < Projects::ApplicationController
-  before_action :module_enabled
-  before_action :snippet, only: [:show, :edit, :destroy, :update, :raw]
+  include RendersNotes
+  include ToggleAwardEmoji
+  include SpammableActions
+  include SnippetsActions
+  include RendersBlob
+
+  before_action :check_snippets_available!
+  before_action :snippet, only: [:show, :edit, :destroy, :update, :raw, :toggle_award_emoji, :mark_as_spam]
 
   # Allow read any snippet
-  before_action :authorize_read_project_snippet!
+  before_action :authorize_read_project_snippet!, except: [:new, :create, :index]
 
   # Allow write(create) snippet
   before_action :authorize_create_project_snippet!, only: [:new, :create]
@@ -17,45 +23,55 @@ class Projects::SnippetsController < Projects::ApplicationController
   respond_to :html
 
   def index
-    @snippets = SnippetsFinder.new.execute(current_user, {
-      filter: :by_project,
-      project: @project
-    })
-    @snippets = @snippets.page(params[:page]).per(PER_PAGE)
-  end
-
-  def new
-    @snippet = @project.snippets.build
-  end
-
-  def create
-    @snippet = CreateSnippetService.new(@project, current_user,
-                                        snippet_params).execute
-
-    if @snippet.valid?
-      respond_with(@snippet,
-                   location: namespace_project_snippet_path(@project.namespace,
-                                                            @project, @snippet))
-    else
-      render :new
+    @snippets = SnippetsFinder.new(
+      current_user,
+      project: @project,
+      scope: params[:scope]
+    ).execute
+    @snippets = @snippets.page(params[:page])
+    if @snippets.out_of_range? && @snippets.total_pages != 0
+      redirect_to project_snippets_path(@project, page: @snippets.total_pages)
     end
   end
 
-  def edit
+  def new
+    @snippet = @noteable = @project.snippets.build
+  end
+
+  def create
+    create_params = snippet_params.merge(spammable_params)
+
+    @snippet = CreateSnippetService.new(@project, current_user, create_params).execute
+
+    recaptcha_check_with_fallback { render :new }
   end
 
   def update
-    UpdateSnippetService.new(project, current_user, @snippet,
-                             snippet_params).execute
-    respond_with(@snippet,
-                 location: namespace_project_snippet_path(@project.namespace,
-                                                          @project, @snippet))
+    update_params = snippet_params.merge(spammable_params)
+
+    UpdateSnippetService.new(project, current_user, @snippet, update_params).execute
+
+    recaptcha_check_with_fallback { render :edit }
   end
 
   def show
-    @note = @project.notes.new(noteable: @snippet)
-    @notes = @snippet.notes.fresh
-    @noteable = @snippet
+    blob = @snippet.blob
+    conditionally_expand_blob(blob)
+
+    respond_to do |format|
+      format.html do
+        @note = @project.notes.new(noteable: @snippet)
+        @noteable = @snippet
+
+        @discussions = @snippet.discussions
+        @notes = prepare_notes_for_rendering(@discussions.flat_map(&:notes), @noteable)
+        render 'show'
+      end
+
+      format.json do
+        render_blob_json(blob)
+      end
+    end
   end
 
   def destroy
@@ -63,22 +79,23 @@ class Projects::SnippetsController < Projects::ApplicationController
 
     @snippet.destroy
 
-    redirect_to namespace_project_snippets_path(@project.namespace, @project)
-  end
-
-  def raw
-    send_data(
-      @snippet.content,
-      type: 'text/plain; charset=utf-8',
-      disposition: 'inline',
-      filename: @snippet.sanitized_file_name
-    )
+    redirect_to project_snippets_path(@project), status: 302
   end
 
   protected
 
   def snippet
     @snippet ||= @project.snippets.find(params[:id])
+  end
+  alias_method :awardable, :snippet
+  alias_method :spammable, :snippet
+
+  def spammable_path
+    project_snippet_path(@project, @snippet)
+  end
+
+  def authorize_read_project_snippet!
+    return render_404 unless can?(current_user, :read_project_snippet, @snippet)
   end
 
   def authorize_update_project_snippet!
@@ -89,11 +106,7 @@ class Projects::SnippetsController < Projects::ApplicationController
     return render_404 unless can?(current_user, :admin_project_snippet, @snippet)
   end
 
-  def module_enabled
-    return render_404 unless @project.snippets_enabled
-  end
-
   def snippet_params
-    params.require(:project_snippet).permit(:title, :content, :file_name, :private, :visibility_level)
+    params.require(:project_snippet).permit(:title, :content, :file_name, :private, :visibility_level, :description)
   end
 end

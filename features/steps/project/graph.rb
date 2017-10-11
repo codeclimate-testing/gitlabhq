@@ -7,11 +7,24 @@ class Spinach::Features::ProjectGraph < Spinach::FeatureSteps
   end
 
   When 'I visit project "Shop" graph page' do
-    visit namespace_project_graph_path(project.namespace, project, "master")
+    visit project_graph_path(project, "master")
   end
 
   step 'I visit project "Shop" commits graph page' do
-    visit commits_namespace_project_graph_path(project.namespace, project, "master")
+    visit commits_project_graph_path(project, "master")
+  end
+
+  step 'I visit project "Shop" languages graph page' do
+    visit languages_project_graph_path(project, "master")
+  end
+
+  step 'I visit project "Shop" chart page' do
+    visit charts_project_graph_path(project, "master")
+  end
+
+  step 'page should have languages graphs' do
+    expect(page).to have_content /Ruby 66.* %/
+    expect(page).to have_content /JavaScript 22.* %/
   end
 
   step 'page should have commits graphs' do
@@ -20,14 +33,14 @@ class Spinach::Features::ProjectGraph < Spinach::FeatureSteps
   end
 
   step 'I visit project "Shop" CI graph page' do
-    visit ci_namespace_project_graph_path(project.namespace, project, 'master')
+    visit ci_project_graph_path(project, 'master')
   end
 
   step 'page should have CI graphs' do
     expect(page).to have_content 'Overall'
-    expect(page).to have_content 'Builds for last week'
-    expect(page).to have_content 'Builds for last month'
-    expect(page).to have_content 'Builds for last year'
+    expect(page).to have_content 'Pipelines for last week'
+    expect(page).to have_content 'Pipelines for last month'
+    expect(page).to have_content 'Pipelines for last year'
     expect(page).to have_content 'Commit duration in minutes for last 30 commits'
   end
 

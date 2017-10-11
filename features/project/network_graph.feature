@@ -34,12 +34,13 @@ Feature: Project Network Graph
   @javascript
   Scenario: I should filter selected tag
     When I switch ref to "v1.0.0"
+    Then page should have "v1.0.0" in title
     Then page should have content not containing "v1.0.0"
     When click "Show only selected branch" checkbox
-    Then page should not have content not containing "v1.0.0"
+    Then page should only have content from "v1.0.0"
     When click "Show only selected branch" checkbox
     Then page should have content not containing "v1.0.0"
 
   Scenario: I should fail to look for a commit
     When I look for a commit by ";"
-    Then page status code should be 404
+    Then I should see non-existent git revision error message

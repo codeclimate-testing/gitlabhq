@@ -1,20 +1,20 @@
 require 'spec_helper'
 
-describe Gitlab::Themes do
+describe Gitlab::Themes, lib: true do
   describe '.body_classes' do
     it 'returns a space-separated list of class names' do
       css = described_class.body_classes
 
-      expect(css).to include('ui_graphite')
-      expect(css).to include(' ui_charcoal ')
+      expect(css).to include('ui_indigo')
+      expect(css).to include(' ui_dark ')
       expect(css).to include(' ui_blue')
     end
   end
 
   describe '.by_id' do
     it 'returns a Theme by its ID' do
-      expect(described_class.by_id(1).name).to eq 'Graphite'
-      expect(described_class.by_id(6).name).to eq 'Blue'
+      expect(described_class.by_id(1).name).to eq 'Indigo'
+      expect(described_class.by_id(3).name).to eq 'Light'
     end
   end
 

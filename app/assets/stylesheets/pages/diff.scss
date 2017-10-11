@@ -1,64 +1,36 @@
 // Common
 .diff-file {
-  margin-left: -$gl-padding;
-  margin-right: -$gl-padding;
-  border: none;
-  border-bottom: 1px solid #E7E9EE;
+  margin-bottom: $gl-padding;
 
-  .diff-header {
-    position: relative;
-    background: $background-color;
-    border-bottom: 1px solid $border-color;
-    padding: 10px 16px;
-    color: #555;
-    z-index: 10;
+  .file-title,
+  .file-title-flex-parent {
+    cursor: pointer;
 
-    .diff-title {
-      font-family: $monospace_font;
-      word-break: break-all;
-      display: block;
-
-      .file-mode {
-        color: #777;
-      }
+    a:hover {
+      text-decoration: none;
     }
 
-    .diff-controls {
-      .btn {
-        padding: 0px 10px;
-        font-size: 13px;
-        line-height: 28px;
-      }
+    &:hover {
+      background-color: $gray-normal;
     }
 
-    .commit-short-id {
-      font-family: $monospace_font;
-      font-size: smaller;
+    .diff-toggle-caret {
+      padding-right: 6px;
     }
   }
-  .diff-content {
-    overflow: auto;
-    overflow-y: hidden;
-    background: #FFF;
-    color: #333;
 
-    .old {
-      span.idiff {
-        background-color: #f8cbcb;
-      }
-    }
-    .new {
-      span.idiff {
-        background-color: #a6f3a6;
-      }
-    }
+  .diff-content {
+    background: $white-light;
+    color: $gl-text-color;
+    border-radius: 0 0 3px 3px;
+
     .unfold {
       cursor: pointer;
     }
 
     .file-mode-changed {
       padding: 10px;
-      color: #777;
+      color: $file-mode-changed;
     }
 
     .suppressed-container {
@@ -68,7 +40,7 @@
       // "Changes suppressed. Click to show." link
       .show-suppressed-diff {
         font-size: 110%;
-        font-weight: bold;
+        font-weight: $gl-font-weight-bold;
       }
     }
 
@@ -76,105 +48,143 @@
       width: 100%;
       font-family: $monospace_font;
       border: none;
-      margin: 0px;
-      padding: 0px;
+      border-collapse: separate;
+      margin: 0;
+      padding: 0;
+      table-layout: fixed;
+
+      .diff-line-num {
+        width: 50px;
+
+        a {
+          transition: none;
+        }
+      }
+
       .line_holder td {
         line-height: $code_line_height;
         font-size: $code_font_size;
+
+        &.noteable_line {
+          position: relative;
+        }
+
+        span {
+          white-space: pre-wrap;
+        }
+
+        .line {
+          word-wrap: break-word;
+        }
+      }
+
+      &.left-side-selected {
+        td.line_content.parallel.right-side {
+          @include user-select(none);
+        }
+      }
+
+      &.right-side-selected {
+        td.line_content.parallel.left-side {
+          @include user-select(none);
+        }
       }
     }
 
     tr.line_holder.parallel {
-      .old_line, .new_line, .diff_line {
-        min-width: 50px;
+      td.line_content.parallel {
+        width: 46%;
       }
 
-      td.line_content.parallel {
-        width: 50%;
+      .add-diff-note {
+        margin-left: -55px;
       }
     }
 
-    .old_line, .new_line, .diff_line {
-      margin: 0px;
-      padding: 0px;
+    .old_line,
+    .new_line {
+      @include user-select(none);
+      margin: 0;
       border: none;
-      background: $background-color;
-      color: rgba(0, 0, 0, 0.3);
-      padding: 0px 5px;
-      border-right: 1px solid $border-color;
+      padding: 0 5px;
+      border-right: 1px solid;
       text-align: right;
       min-width: 35px;
       max-width: 50px;
       width: 35px;
-      @include user-select(none);
+
       a {
         float: left;
         width: 35px;
-        font-weight: normal;
-        color: rgba(0, 0, 0, 0.3);
-        &:hover {
-          text-decoration: underline;
+        font-weight: $gl-font-weight-normal;
+
+        &[disabled] {
+          cursor: default;
+
+          &:hover,
+          &:active {
+            text-decoration: none;
+          }
         }
       }
-      &.new {
-        background: #CFD;
-      }
-      &.old {
-        background: #FDD;
-      }
     }
-    .diff_line {
-      padding: 0;
-    }
-    .line_holder {
-      &.old .old_line,
-      &.old .new_line {
-        background: #ffdddd;
-        border-color: #f1c0c0;
-      }
-      &.new .old_line,
-      &.new .new_line {
-        background: #dbffdb;
-        border-color: #c1e9c1;
-      }
-    }
+
     .line_content {
       display: block;
-      margin: 0px;
-      padding: 0px 0.5em;
+      margin: 0;
+      padding: 0 1.5em;
       border: none;
-      &.new {
-        background: #eaffea;
-      }
-      &.old {
-        background: #ffecec;
-      }
-      &.matched {
-        color: $border-color;
-        background: #fafafa;
-      }
+      position: relative;
+
       &.parallel {
         display: table-cell;
+
+        span {
+          word-break: break-all;
+        }
+      }
+
+      &.old {
+        &::before {
+          content: '-';
+          position: absolute;
+          left: 0.5em;
+        }
+      }
+
+      &.new {
+        &::before {
+          content: '+';
+          position: absolute;
+          left: 0.5em;
+        }
       }
     }
   }
+
   .image {
-    background: #ddd;
+    background: $file-image-bg;
     text-align: center;
     padding: 30px;
+
     .wrap {
       display: inline-block;
     }
 
     .frame {
       display: inline-block;
-      background-color: #fff;
+      background-color: $white-light;
       line-height: 0;
+
       img {
-        border: 1px solid #FFF;
-        background: image-url('trans_bg.gif');
+        border: 1px solid $white-light;
+        background-image: linear-gradient(45deg, $border-color 25%, transparent 25%, transparent 75%, $border-color 75%, $border-color 100%),
+        linear-gradient(45deg, $border-color 25%, transparent 25%, transparent 75%, $border-color 75%, $border-color 100%);
+        background-size: 10px 10px;
+        background-position: 0 0, 5px 5px;
         max-width: 100%;
       }
+
       &.deleted {
         border: 1px solid $deleted;
       }
@@ -183,10 +193,11 @@
         border: 1px solid $added;
       }
     }
+
     .image-info {
       font-size: 12px;
-      margin: 5px 0 0 0;
-      color: grey;
+      margin: 5px 0 0;
+      color: $diff-image-info-color;
     }
 
     .view.swipe {
@@ -197,18 +208,21 @@
         margin: auto;
         position: relative;
       }
+
       .swipe-wrap {
         overflow: hidden;
-        border-left: 1px solid #999;
+        border-left: 1px solid $diff-swipe-border;
         position: absolute;
         display: block;
         top: 13px;
         right: 7px;
       }
+
       .frame {
         top: 0;
         right: 0;
         position: absolute;
+
         &.deleted {
           margin: 0;
           display: block;
@@ -216,6 +230,7 @@
           right: 7px;
         }
       }
+
       .swipe-bar {
         display: block;
         height: 100%;
@@ -223,28 +238,32 @@
         z-index: 100;
         position: absolute;
         cursor: pointer;
+
         &:hover {
           .top-handle {
             background-position: -15px 3px;
           }
+
           .bottom-handle {
             background-position: -15px -11px;
           }
         }
+
         .top-handle {
           display: block;
           height: 14px;
           width: 15px;
           position: absolute;
-          top: 0px;
+          top: 0;
           background: image-url('swipemode_sprites.gif') 0 3px no-repeat;
         }
+
         .bottom-handle {
           display: block;
           height: 14px;
           width: 15px;
           position: absolute;
-          bottom: 0px;
+          bottom: 0;
           background: image-url('swipemode_sprites.gif') 0 -11px no-repeat;
         }
       }
@@ -256,19 +275,22 @@
         margin: auto;
         position: relative;
       }
-      .frame.added, .frame.deleted {
+
+      .frame.added,
+      .frame.deleted {
         position: absolute;
         display: block;
-        top: 0px;
-        left: 0px;
+        top: 0;
+        left: 0;
       }
+
       .controls {
         display: block;
         height: 14px;
         width: 300px;
         z-index: 100;
         position: absolute;
-        bottom: 0px;
+        bottom: 0;
         left: 50%;
         margin-left: -150px;
 
@@ -284,11 +306,11 @@
         .dragger {
           display: block;
           position: absolute;
-          left: 0px;
-          top: 0px;
+          left: 0;
+          top: 0;
           height: 14px;
           width: 14px;
-          background: image-url('onion_skin_sprites.gif') 0px -34px repeat-x;
+          background: image-url('onion_skin_sprites.gif') 0 -34px repeat-x;
           cursor: pointer;
         }
 
@@ -296,17 +318,17 @@
           display: block;
           position: absolute;
           top: 2px;
-          right: 0px;
+          right: 0;
           height: 10px;
           width: 10px;
-          background: image-url('onion_skin_sprites.gif') -2px 0px no-repeat;
+          background: image-url('onion_skin_sprites.gif') -2px 0 no-repeat;
         }
 
         .opaque {
           display: block;
           position: absolute;
           top: 2px;
-          left: 0px;
+          left: 0;
           height: 10px;
           width: 10px;
           background: image-url('onion_skin_sprites.gif') -2px -10px no-repeat;
@@ -315,12 +337,14 @@
     }
     //.view.onion-skin
   }
+
   .view-modes {
     padding: 10px;
     text-align: center;
-    background: #EEE;
+    background: $gray-darker;
 
-    ul, li {
+    ul,
+    li {
       list-style: none;
       margin: 0;
       padding: 0;
@@ -328,23 +352,28 @@
     }
 
     li {
-      color: grey;
-      border-left: 1px solid #c1c1c1;
+      color: $diff-view-modes-color;
+      border-left: 1px solid $diff-view-modes-border;
       padding: 0 12px 0 16px;
       cursor: pointer;
+
       &:first-child {
         border-left: none;
       }
+
       &:hover {
         text-decoration: underline;
       }
+
       &.active {
+        cursor: default;
+        color: $gl-text-color;
+
         &:hover {
           text-decoration: none;
         }
-        cursor: default;
-        color: #333;
       }
+
       &.disabled {
         display: none;
       }
@@ -358,7 +387,7 @@
 }
 
 .diff-file .line_content {
-  white-space: pre;
+  white-space: pre-wrap;
 }
 
 .diff-wrap-lines .line_content {
@@ -367,6 +396,24 @@
 
 .inline-parallel-buttons {
   float: right;
+}
+
+.files-changed {
+  border-bottom: none;
+}
+
+.diff-stats-summary-toggler {
+  padding: 0;
+  background-color: transparent;
+  border: 0;
+  color: $gl-link-color;
+  font-weight: $gl-font-weight-bold;
+
+  &:hover,
+  &:focus {
+    outline: none;
+    color: $gl-link-hover-color;
+  }
 }
 
 // Mobile
@@ -401,4 +448,199 @@
     top: 5px;
     right: 15px;
   }
+}
+
+@mixin diff_background($background, $idiff, $border) {
+  background: $background;
+
+  &.line_content span.idiff {
+    background: $idiff;
+  }
+
+  &.diff-line-num {
+    border-color: $border;
+  }
+}
+
+.files {
+  margin-top: 1px;
+
+  .diff-file:last-child {
+    margin-bottom: 0;
+  }
+}
+
+.file-holder {
+  .diff-line-num:not(.js-unfold-bottom) {
+    a {
+      &::before {
+        content: attr(data-linenumber);
+      }
+    }
+  }
+}
+
+.diff-comment-avatar-holders {
+  position: absolute;
+  height: 19px;
+  width: 19px;
+  margin-left: -15px;
+  z-index: 100;
+
+  &:hover {
+    .diff-comment-avatar,
+    .diff-comments-more-count {
+      @for $i from 1 through 4 {
+        $x-pos: 14px;
+
+        &:nth-child(#{$i}) {
+          @if $i == 4 {
+            $x-pos: 14.5px;
+          }
+
+          transform: translateX((($i * $x-pos) - $x-pos));
+
+          &:hover {
+            transform: translateX((($i * $x-pos) - $x-pos));
+          }
+        }
+      }
+    }
+
+    .diff-comments-more-count {
+      padding-left: 2px;
+      padding-right: 2px;
+      width: auto;
+    }
+  }
+}
+
+.diff-comment-avatar,
+.diff-comments-more-count {
+  position: absolute;
+  left: 0;
+  width: 19px;
+  height: 19px;
+  margin-right: 0;
+  border-color: $white-light;
+  cursor: pointer;
+  transition: all .1s ease-out;
+
+  @for $i from 1 through 4 {
+    &:nth-child(#{$i}) {
+      z-index: (4 - $i);
+    }
+  }
+}
+
+.diff-comments-more-count {
+  width: 19px;
+  min-width: 19px;
+  padding-left: 0;
+  padding-right: 0;
+  overflow: hidden;
+}
+
+.diff-comments-more-count,
+.diff-notes-collapse {
+  @extend .avatar-counter;
+}
+
+.diff-notes-collapse {
+  width: 19px;
+  height: 19px;
+  padding: 0;
+  transition: transform .1s ease-out;
+  z-index: 100;
+
+  svg {
+    vertical-align: text-top;
+  }
+
+  path {
+    fill: $white-light;
+  }
+
+  &:focus {
+    outline: 0;
+  }
+}
+
+.diff-files-changed {
+  .inline-parallel-buttons {
+    position: relative;
+    z-index: 1;
+  }
+
+  .commit-stat-summary {
+    @include new-style-dropdown;
+
+    @media (min-width: $screen-sm-min) {
+      margin-left: -$gl-padding;
+      padding-left: $gl-padding;
+      background-color: $white-light;
+    }
+  }
+
+  @media (min-width: $screen-sm-min) {
+    position: -webkit-sticky;
+    position: sticky;
+    top: 24px;
+    background-color: $white-light;
+    z-index: 190;
+
+    &.diff-files-changed-merge-request {
+      top: 76px;
+    }
+
+    &:not(.is-stuck) .diff-stats-additions-deletions-collapsed {
+      display: none;
+    }
+
+    &.is-stuck {
+      padding-top: 0;
+      padding-bottom: 0;
+      border-bottom: 1px solid $white-dark;
+      transform: translateY(16px);
+
+      .diff-stats-additions-deletions-expanded,
+      .inline-parallel-buttons {
+        display: none;
+      }
+    }
+  }
+}
+
+@media (min-width: $screen-sm-min) {
+  .with-performance-bar {
+    .diff-files-changed.diff-files-changed-merge-request {
+      top: 76px + $performance-bar-height;
+    }
+  }
+}
+
+.diff-file-changes {
+  width: 450px;
+  z-index: 150;
+
+  @media (min-width: $screen-sm-min) {
+    left: $gl-padding;
+  }
+
+  a {
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
+  .diff-changed-file {
+    display: flex;
+    align-items: center;
+  }
+}
+
+.diff-file-changes-path {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

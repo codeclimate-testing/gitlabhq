@@ -1,22 +1,22 @@
-- page_title "Milestones"
-= render "header_title"
-= render 'shared/milestones_filter'
+- @no_container = true
+- page_title 'Milestones'
 
-.gray-content-block
-  .pull-right
-    - if can? current_user, :admin_milestone, @project
-      = link_to new_namespace_project_milestone_path(@project.namespace, @project), class: "pull-right btn btn-new", title: "New Milestone" do
-        %i.fa.fa-plus
-        New Milestone
-  .oneline
-    Milestone allows you to group issues and set due date for it
+%div{ class: container_class }
+  .top-area
+    = render 'shared/milestones_filter', counts: milestone_counts(@project.milestones)
 
-.milestones
-  %ul.content-list
-    = render @milestones
+    .nav-controls
+      = render 'shared/milestones_sort_dropdown'
+      - if can?(current_user, :admin_milestone, @project)
+        = link_to new_project_milestone_path(@project), class: "btn btn-new", title: 'New milestone' do
+          New milestone
 
-    - if @milestones.blank?
-      %li
-        .nothing-here-block No milestones to show
+  .milestones
+    %ul.content-list
+      = render @milestones
 
-  = paginate @milestones, theme: "gitlab"
+      - if @milestones.blank?
+        %li
+          .nothing-here-block No milestones to show
+
+    = paginate @milestones, theme: 'gitlab'

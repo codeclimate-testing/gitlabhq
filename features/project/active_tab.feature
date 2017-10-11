@@ -7,22 +7,13 @@ Feature: Project Active Tab
 
   Scenario: On Project Home
     Given I visit my project's home page
-    Then the active main tab should be Home
-    And no other main tabs should be active
+    Then the active sub tab should be Home
+    And no other sub tabs should be active
+    And the active main tab should be Project
 
-  Scenario: On Project Files
+  Scenario: On Project Repository
     Given I visit my project's files page
-    Then the active main tab should be Files
-    And no other main tabs should be active
-
-  Scenario: On Project Commits
-    Given I visit my project's commits page
-    Then the active main tab should be Commits
-    And no other main tabs should be active
-
-  Scenario: On Project Network
-    Given I visit my project's network page
-    Then the active main tab should be Network
+    Then the active main tab should be Repository
     And no other main tabs should be active
 
   Scenario: On Project Issues
@@ -35,74 +26,95 @@ Feature: Project Active Tab
     Then the active main tab should be Merge Requests
     And no other main tabs should be active
 
-  Scenario: On Project Members
-    Given I visit my project's members page
-    Then the active main tab should be Members
-    And no other main tabs should be active
-
   Scenario: On Project Wiki
     Given I visit my project's wiki page
     Then the active main tab should be Wiki
+    And no other main tabs should be active
+
+  Scenario: On Project Members
+    Given I visit my project's members page
+    Then the active main tab should be Members
     And no other main tabs should be active
 
   # Sub Tabs: Home
 
   Scenario: On Project Home/Show
     Given I visit my project's home page
-    Then the active main tab should be Home
+    Then the active sub tab should be Home
+    And no other sub tabs should be active
+    And the active main tab should be Project
     And no other main tabs should be active
+
+  Scenario: On Project Home/Activity
+    Given I visit my project's home page
+    And I click the "Activity" tab
+    Then the active sub tab should be Activity
+    And no other sub tabs should be active
+    And the active main tab should be Project
 
   # Sub Tabs: Settings
 
-  Scenario: On Project Settings/Edit
+  Scenario: On Project Settings/Integrations
     Given I visit my project's settings page
-    And I click the "Edit" tab
-    Then the active sub nav should be Edit
-    And no other sub navs should be active
+    And I click the "Integrations" tab
+    Then the active sub tab should be Integrations
+    And no other sub tabs should be active
     And the active main tab should be Settings
 
-  Scenario: On Project Settings/Hooks
+  Scenario: On Project Settings/Repository
     Given I visit my project's settings page
-    And I click the "Hooks" tab
-    Then the active sub nav should be Hooks
-    And no other sub navs should be active
+    And I click the "Repository" tab
+    Then the active sub tab should be Repository
+    And no other sub tabs should be active
     And the active main tab should be Settings
 
-  Scenario: On Project Settings/Deploy Keys
-    Given I visit my project's settings page
-    And I click the "Deploy Keys" tab
-    Then the active sub nav should be Deploy Keys
-    And no other sub navs should be active
-    And the active main tab should be Settings
+  # Sub Tabs: Repository
 
-  # Sub Tabs: Commits
+  Scenario: On Project Repository/Files
+    Given I visit my project's files page
+    Then the active sub tab should be Files
+    And no other sub tabs should be active
+    And the active main tab should be Repository
 
-  Scenario: On Project Commits/Commits
+  Scenario: On Project Repository/Commits
     Given I visit my project's commits page
     Then the active sub tab should be Commits
     And no other sub tabs should be active
-    And the active main tab should be Commits
+    And the active main tab should be Repository
 
-  Scenario: On Project Commits/Compare
+  Scenario: On Project Repository/Graph
+    Given I visit my project's graph page
+    Then the active sub tab should be Graph
+    And no other sub tabs should be active
+    And the active main tab should be Repository
+
+  Scenario: On Project Repository/Compare
     Given I visit my project's commits page
     And I click the "Compare" tab
     Then the active sub tab should be Compare
     And no other sub tabs should be active
-    And the active main tab should be Commits
+    And the active main tab should be Repository
 
-  Scenario: On Project Commits/Branches
+  Scenario: On Project Repository/Charts
+    Given I visit my project's commits page
+    And I click the "Charts" tab
+    Then the active sub tab should be Charts
+    And no other sub tabs should be active
+    And the active main tab should be Repository
+
+  Scenario: On Project Repository/Branches
     Given I visit my project's commits page
     And I click the "Branches" tab
     Then the active sub tab should be Branches
     And no other sub tabs should be active
-    And the active main tab should be Commits
+    And the active main tab should be Repository
 
-  Scenario: On Project Commits/Tags
+  Scenario: On Project Repository/Tags
     Given I visit my project's commits page
     And I click the "Tags" tab
     Then the active sub tab should be Tags
     And no other sub tabs should be active
-    And the active main tab should be Commits
+    And the active main tab should be Repository
 
   Scenario: On Project Issues/Browse
     Given I visit my project's issues page
@@ -111,12 +123,16 @@ Feature: Project Active Tab
 
   Scenario: On Project Issues/Milestones
     Given I visit my project's issues page
-    And I click the "Milestones" tab
-    Then the active main tab should be Milestones
+    And I click the "Milestones" sub tab
+    Then the active main tab should be Issues
+    Then the active sub tab should be Milestones
     And no other main tabs should be active
+    And no other sub tabs should be active
 
   Scenario: On Project Issues/Labels
     Given I visit my project's issues page
-    And I click the "Labels" tab
-    Then the active main tab should be Labels
+    And I click the "Labels" sub tab
+    Then the active main tab should be Issues
+    Then the active sub tab should be Labels
     And no other main tabs should be active
+    And no other sub tabs should be active

@@ -4,54 +4,79 @@ module LabelsHelper
   # Link to a Label
   #
   # label   - Label object to link to
-  # project - Project object which will be used as the context for the label's
-  #           link. If omitted, defaults to `@project`, or the label's own
-  #           project.
+  # subject - Project/Group object which will be used as the context for the
+  #           label's link. If omitted, defaults to the label's own group/project.
+  # type    - The type of item the link will point to (:issue or
+  #           :merge_request). If omitted, defaults to :issue.
   # block   - An optional block that will be passed to `link_to`, forming the
   #           body of the link element. If omitted, defaults to
   #           `render_colored_label`.
   #
   # Examples:
   #
-  #   # Allow the generated link to use the label's own project
+  #   # Allow the generated link to use the label's own subject
   #   link_to_label(label)
   #
-  #   # Force the generated link to use @project
-  #   @project = Project.first
-  #   link_to_label(label)
+  #   # Force the generated link to use a provided group
+  #   link_to_label(label, subject: Group.last)
   #
   #   # Force the generated link to use a provided project
-  #   link_to_label(label, project: Project.last)
+  #   link_to_label(label, subject: Project.last)
+  #
+  #   # Force the generated link to point to merge requests instead of issues
+  #   link_to_label(label, type: :merge_request)
   #
   #   # Customize link body with a block
   #   link_to_label(label) { "My Custom Label Text" }
   #
   # Returns a String
-  def link_to_label(label, project: nil, &block)
-    project ||= @project || label.project
-    link = namespace_project_issues_path(project.namespace, project,
-                                         label_name: label.name)
+  def link_to_label(label, subject: nil, type: :issue, tooltip: true, css_class: nil, &block)
+    link = label_filter_path(subject || label.subject, label, type: type)
 
     if block_given?
-      link_to link, &block
+      link_to link, class: css_class, &block
     else
-      link_to render_colored_label(label), link
+      link_to render_colored_label(label, tooltip: tooltip), link, class: css_class
     end
   end
 
-  def project_label_names
-    @project.labels.pluck(:title)
+  def label_filter_path(subject, label, type: :issue)
+    case subject
+    when Group
+      send("#{type.to_s.pluralize}_group_path", # rubocop:disable GitlabSecurity/PublicSend
+                  subject,
+                  label_name: [label.name])
+    when Project
+      send("namespace_project_#{type.to_s.pluralize}_path", # rubocop:disable GitlabSecurity/PublicSend
+                  subject.namespace,
+                  subject,
+                  label_name: [label.name])
+    end
   end
 
-  def render_colored_label(label)
-    label_color = label.color || Label::DEFAULT_COLOR
-    text_color = text_color_for_bg(label_color)
+  def edit_label_path(label)
+    case label
+    when GroupLabel then edit_group_label_path(label.group, label)
+    when ProjectLabel then edit_project_label_path(label.project, label)
+    end
+  end
+
+  def destroy_label_path(label)
+    case label
+    when GroupLabel then group_label_path(label.group, label)
+    when ProjectLabel then project_label_path(label.project, label)
+    end
+  end
+
+  def render_colored_label(label, label_suffix = '', tooltip: true)
+    text_color = text_color_for_bg(label.color)
 
     # Intentionally not using content_tag here so that this method can be called
     # by LabelReferenceFilter
-    span = %(<span class="label color-label") +
-      %( style="background-color: #{label_color}; color: #{text_color}">) +
-      escape_once(label.name) + '</span>'
+    span = %(<span class="label color-label #{"has-tooltip" if tooltip}" ) +
+      %(style="background-color: #{label.color}; color: #{text_color}" ) +
+      %(title="#{escape_once(label.description)}" data-container="body">) +
+      %(#{escape_once(label.name)}#{label_suffix}</span>)
 
     span.html_safe
   end
@@ -83,7 +108,11 @@ module LabelsHelper
   end
 
   def text_color_for_bg(bg_color)
-    r, g, b = bg_color.slice(1,7).scan(/.{2}/).map(&:hex)
+    if bg_color.length == 4
+      r, g, b = bg_color[1, 4].scan(/./).map { |v| (v * 2).hex }
+    else
+      r, g, b = bg_color[1, 7].scan(/.{2}/).map(&:hex)
+    end
 
     if (r + g + b) > 500
       '#333333'
@@ -92,21 +121,51 @@ module LabelsHelper
     end
   end
 
-  def projects_labels_options
-    labels =
-      if @project
-        @project.labels
-      else
-        Label.where(project_id: @projects)
-      end
+  def labels_filter_path(only_group_labels = false)
+    project = @target_project || @project
 
-    grouped_labels = GlobalLabel.build_collection(labels)
-    grouped_labels.unshift(Label::None)
-    grouped_labels.unshift(Label::Any)
-
-    options_from_collection_for_select(grouped_labels, 'name', 'title', params[:label_name])
+    if project
+      project_labels_path(project, :json)
+    elsif @group
+      options = { only_group_labels: only_group_labels } if only_group_labels
+      group_labels_path(@group, :json, options)
+    else
+      dashboard_labels_path(:json)
+    end
   end
 
-  # Required for Gitlab::Markdown::LabelReferenceFilter
+  def can_subscribe_to_label_in_different_levels?(label)
+    defined?(@project) && label.is_a?(GroupLabel)
+  end
+
+  def label_subscription_status(label, project)
+    return 'group-level' if label.subscribed?(current_user)
+    return 'project-level' if label.subscribed?(current_user, project)
+
+    'unsubscribed'
+  end
+
+  def toggle_subscription_label_path(label, project)
+    return toggle_subscription_group_label_path(label.group, label) unless project
+
+    case label_subscription_status(label, project)
+    when 'group-level' then toggle_subscription_group_label_path(label.group, label)
+    when 'project-level' then toggle_subscription_project_label_path(project, label)
+    when 'unsubscribed' then toggle_subscription_project_label_path(project, label)
+    end
+  end
+
+  def label_subscription_toggle_button_text(label, project = nil)
+    label.subscribed?(current_user, project) ? 'Unsubscribe' : 'Subscribe'
+  end
+
+  def label_deletion_confirm_text(label)
+    case label
+    when GroupLabel then 'Remove this label? This will affect all projects within the group. Are you sure?'
+    when ProjectLabel then 'Remove this label? Are you sure?'
+    end
+  end
+
+  # Required for Banzai::Filter::LabelReferenceFilter
   module_function :render_colored_label, :text_color_for_bg, :escape_once
 end

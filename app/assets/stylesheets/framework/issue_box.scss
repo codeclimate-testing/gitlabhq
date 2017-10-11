@@ -4,32 +4,43 @@
  *
  */
 
-.issue-box {
-  @include border-radius(2px);
+.status-box {
 
-  display: inline-block;
-  padding: 10px $gl-padding;
-  font-weight: normal;
+  /* Extra small devices (phones, less than 768px) */
+  /* No media query since this is the default in Bootstrap */
+  padding: 5px 11px;
+  margin-top: 4px;
+  /* Small devices (tablets, 768px and up) */
+  @media (min-width: $screen-sm-min) {
+    padding: 0 $gl-btn-padding;
+    margin-top: 5px;
+  }
+
+  border-radius: 3px;
+  display: block;
+  float: left;
   margin-right: 10px;
+  color: $white-light;
   font-size: $gl-font-size;
+  line-height: 25px;
 
-  &.issue-box-closed {
+  &.status-box-closed {
     background-color: $gl-danger;
-    color: #FFF;
   }
 
-  &.issue-box-merged {
+  &.status-box-merged {
     background-color: $gl-primary;
-    color: #FFF;
   }
 
-  &.issue-box-open {
-    background-color: #019875;
-    color: #FFF;
+  &.status-box-open {
+    background-color: $green-500;
   }
 
-  &.issue-box-expired {
-    background: #cea61b;
-    color: #FFF;
+  &.status-box-expired {
+    background-color: $issue-status-expired;
+  }
+
+  &.status-box-upcoming {
+    background: $gl-text-color-secondary;
   }
 }

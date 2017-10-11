@@ -4,49 +4,59 @@ module Gitlab
       include Enumerable
 
       def parse(lines)
+        return [] if lines.blank?
+
         @lines = lines
-        lines_obj = []
         line_obj_index = 0
         line_old = 1
         line_new = 1
         type = nil
+        context = nil
 
-        lines_arr = ::Gitlab::InlineDiff.processing lines
+        # By returning an Enumerator we make it possible to search for a single line (with #find)
+        # without having to instantiate all the others that come after it.
+        Enumerator.new do |yielder|
+          @lines.each do |line|
+            next if filename?(line)
 
-        lines_arr.each do |line|
-          next if filename?(line)
+            full_line = line.delete("\n")
 
-          full_line = html_escape(line.gsub(/\n/, ''))
-          full_line = ::Gitlab::InlineDiff.replace_markers full_line
+            if line =~ /^@@ -/
+              type = "match"
 
-          if line.match(/^@@ -/)
-            type = "match"
+              line_old = line.match(/\-[0-9]*/)[0].to_i.abs rescue 0
+              line_new = line.match(/\+[0-9]*/)[0].to_i.abs rescue 0
 
-            line_old = line.match(/\-[0-9]*/)[0].to_i.abs rescue 0
-            line_new = line.match(/\+[0-9]*/)[0].to_i.abs rescue 0
+              next if line_old <= 1 && line_new <= 1 # top of file
+              yielder << Gitlab::Diff::Line.new(full_line, type, line_obj_index, line_old, line_new)
+              line_obj_index += 1
+              next
+            elsif line[0] == '\\'
+              type = "#{context}-nonewline"
 
-            next if line_old <= 1 && line_new <= 1 #top of file
-            lines_obj << Gitlab::Diff::Line.new(full_line, type, line_obj_index, line_old, line_new)
-            line_obj_index += 1
-            next
-          else
-            type = identification_type(line)
-            lines_obj << Gitlab::Diff::Line.new(full_line, type, line_obj_index, line_old, line_new)
-            line_obj_index += 1
-          end
+              yielder << Gitlab::Diff::Line.new(full_line, type, line_obj_index, line_old, line_new)
+              line_obj_index += 1
+            else
+              type = identification_type(line)
+              yielder << Gitlab::Diff::Line.new(full_line, type, line_obj_index, line_old, line_new)
+              line_obj_index += 1
+            end
 
-
-          if line[0] == "+"
-            line_new += 1
-          elsif line[0] == "-"
-            line_old += 1
-          else
-            line_new += 1
-            line_old += 1
+            case line[0]
+            when "+"
+              line_new += 1
+              context = :new
+            when "-"
+              line_old += 1
+              context = :old
+            when "\\" # rubocop:disable Lint/EmptyWhen
+              # No increment
+            else
+              line_new += 1
+              line_old += 1
+            end
           end
         end
-
-        lines_obj
       end
 
       def empty?
@@ -56,23 +66,20 @@ module Gitlab
       private
 
       def filename?(line)
-        line.start_with?('--- /dev/null', '+++ /dev/null', '--- a', '+++ b',
-                         '--- /tmp/diffy', '+++ /tmp/diffy')
+        line.start_with?( '--- /dev/null', '+++ /dev/null', '--- a', '+++ b',
+                          '+++ a', # The line will start with `+++ a` in the reverse diff of an orphan commit
+                          '--- /tmp/diffy', '+++ /tmp/diffy')
       end
 
       def identification_type(line)
-        if line[0] == "+"
+        case line[0]
+        when "+"
           "new"
-        elsif line[0] == "-"
+        when "-"
           "old"
         else
           nil
         end
-      end
-
-      def html_escape(str)
-        replacements = { '&' => '&amp;', '>' => '&gt;', '<' => '&lt;', '"' => '&quot;', "'" => '&#39;' }
-        str.gsub(/[&"'><]/, replacements)
       end
     end
   end

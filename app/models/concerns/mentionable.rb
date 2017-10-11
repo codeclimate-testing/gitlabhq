@@ -1,6 +1,6 @@
 # == Mentionable concern
 #
-# Contains functionality related to objects that can mention Users, Issues, MergeRequests, or Commits by
+# Contains functionality related to objects that can mention Users, Issues, MergeRequests, Commits or Snippets by
 # GFM references.
 #
 # Used by Issue, Note, MergeRequest, and Commit.
@@ -10,19 +10,20 @@ module Mentionable
 
   module ClassMethods
     # Indicate which attributes of the Mentionable to search for GFM references.
-    def attr_mentionable(*attrs)
-      mentionable_attrs.concat(attrs.map(&:to_s))
-    end
-
-    # Accessor for attributes marked mentionable.
-    def mentionable_attrs
-      @mentionable_attrs ||= []
+    def attr_mentionable(attr, options = {})
+      attr = attr.to_s
+      mentionable_attrs << [attr, options]
     end
   end
 
   included do
+    # Accessor for attributes marked mentionable.
+    cattr_accessor :mentionable_attrs, instance_accessor: false do
+      []
+    end
+
     if self < Participable
-      participant ->(current_user) { mentioned_users(current_user, load_lazy_references: false) }
+      participant -> (user, ext) { all_references(user, extractor: ext) }
     end
   end
 
@@ -37,38 +38,76 @@ module Mentionable
     "#{friendly_name} #{to_reference(from_project)}"
   end
 
-  # Construct a String that contains possible GFM references.
-  def mentionable_text
-    self.class.mentionable_attrs.map { |attr| send(attr) }.compact.join("\n\n")
-  end
-
   # The GFM reference to this Mentionable, which shouldn't be included in its #references.
   def local_reference
     self
   end
 
-  def all_references(current_user = self.author, text = self.mentionable_text, load_lazy_references: true)
-    ext = Gitlab::ReferenceExtractor.new(self.project, current_user, load_lazy_references: load_lazy_references)
-    ext.analyze(text)
-    ext
+  def all_references(current_user = nil, extractor: nil)
+    @extractors ||= {}
+
+    # Use custom extractor if it's passed in the function parameters.
+    if extractor
+      @extractors[current_user] = extractor
+    else
+      extractor = @extractors[current_user] ||= Gitlab::ReferenceExtractor.new(project, current_user)
+
+      extractor.reset_memoized_values
+    end
+
+    self.class.mentionable_attrs.each do |attr, options|
+      text    = __send__(attr) # rubocop:disable GitlabSecurity/PublicSend
+      options = options.merge(
+        cache_key: [self, attr],
+        author: author,
+        skip_project_check: skip_project_check?
+      )
+
+      extractor.analyze(text, options)
+    end
+
+    extractor
   end
 
-  def mentioned_users(current_user = nil, load_lazy_references: true)
-    all_references(current_user, load_lazy_references: load_lazy_references).users
+  def mentioned_users(current_user = nil)
+    all_references(current_user).users
+  end
+
+  def directly_addressed_users(current_user = nil)
+    all_references(current_user).directly_addressed_users
   end
 
   # Extract GFM references to other Mentionables from this Mentionable. Always excludes its #local_reference.
-  def referenced_mentionables(current_user = self.author, text = self.mentionable_text, load_lazy_references: true)
-    return [] if text.blank?
+  def referenced_mentionables(current_user = self.author)
+    return [] unless matches_cross_reference_regex?
 
-    refs = all_references(current_user, text, load_lazy_references: load_lazy_references)
-    (refs.issues + refs.merge_requests + refs.commits) - [local_reference]
+    refs = all_references(current_user)
+    refs = (refs.issues + refs.merge_requests + refs.commits)
+
+    # We're using this method instead of Array diffing because that requires
+    # both of the object's `hash` values to be the same, which may not be the
+    # case for otherwise identical Commit objects.
+    refs.reject { |ref| ref == local_reference }
   end
 
-  # Create a cross-reference Note for each GFM reference to another Mentionable found in +mentionable_text+.
-  def create_cross_references!(author = self.author, without = [], text = self.mentionable_text)
-    refs = referenced_mentionables(author, text)
-    
+  # Uses regex to quickly determine if mentionables might be referenced
+  # Allows heavy processing to be skipped
+  def matches_cross_reference_regex?
+    reference_pattern = if !project || project.default_issues_tracker?
+                          ReferenceRegexes::DEFAULT_PATTERN
+                        else
+                          ReferenceRegexes::EXTERNAL_PATTERN
+                        end
+
+    self.class.mentionable_attrs.any? do |attr, _|
+      __send__(attr) =~ reference_pattern # rubocop:disable GitlabSecurity/PublicSend
+    end
+  end
+
+  # Create a cross-reference Note for each GFM reference to another Mentionable found in the +mentionable_attrs+.
+  def create_cross_references!(author = self.author, without = [])
+    refs = referenced_mentionables(author)
+
     # We're using this method instead of Array diffing because that requires
     # both of the object's `hash` values to be the same, which may not be the
     # case for otherwise identical Commit objects.
@@ -86,10 +125,7 @@ module Mentionable
 
     return if changes.empty?
 
-    original_text = changes.collect { |_, vals| vals.first }.join(' ')
-
-    preexisting = referenced_mentionables(author, original_text)
-    create_cross_references!(author, preexisting)
+    create_cross_references!(author)
   end
 
   private
@@ -106,15 +142,19 @@ module Mentionable
   def detect_mentionable_changes
     source = (changes.present? ? changes : previous_changes).dup
 
-    mentionable = self.class.mentionable_attrs
+    mentionable = self.class.mentionable_attrs.map { |attr, options| attr }
 
     # Only include changed fields that are mentionable
     source.select { |key, val| mentionable.include?(key) }
   end
-  
+
   # Determine whether or not a cross-reference Note has already been created between this Mentionable and
   # the specified target.
   def cross_reference_exists?(target)
     SystemNoteService.cross_reference_exists?(target, local_reference)
+  end
+
+  def skip_project_check?
+    false
   end
 end

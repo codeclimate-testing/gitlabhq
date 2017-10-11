@@ -1,9 +1,82 @@
 module API
-  # MergeRequest API
   class MergeRequests < Grape::API
-    before { authenticate! }
+    include PaginationParams
 
-    resource :projects do
+    before { authenticate_non_get! }
+
+    helpers ::Gitlab::IssuableMetadata
+
+    helpers do
+      def find_merge_requests(args = {})
+        args = params.merge(args)
+
+        args[:milestone_title] = args.delete(:milestone)
+        args[:label_name] = args.delete(:labels)
+
+        merge_requests = MergeRequestsFinder.new(current_user, args).execute
+                           .reorder(args[:order_by] => args[:sort])
+        merge_requests = paginate(merge_requests)
+                           .preload(:target_project)
+
+        return merge_requests if args[:view] == 'simple'
+
+        merge_requests
+          .preload(:notes, :author, :assignee, :milestone, :merge_request_diff, :labels, :timelogs)
+      end
+
+      params :merge_requests_params do
+        optional :state, type: String, values: %w[opened closed merged all], default: 'all',
+                         desc: 'Return opened, closed, merged, or all merge requests'
+        optional :order_by, type: String, values: %w[created_at updated_at], default: 'created_at',
+                            desc: 'Return merge requests ordered by `created_at` or `updated_at` fields.'
+        optional :sort, type: String, values: %w[asc desc], default: 'desc',
+                        desc: 'Return merge requests sorted in `asc` or `desc` order.'
+        optional :milestone, type: String, desc: 'Return merge requests for a specific milestone'
+        optional :labels, type: String, desc: 'Comma-separated list of label names'
+        optional :created_after, type: DateTime, desc: 'Return merge requests created after the specified time'
+        optional :created_before, type: DateTime, desc: 'Return merge requests created before the specified time'
+        optional :view, type: String, values: %w[simple], desc: 'If simple, returns the `iid`, URL, title, description, and basic state of merge request'
+        optional :author_id, type: Integer, desc: 'Return merge requests which are authored by the user with the given ID'
+        optional :assignee_id, type: Integer, desc: 'Return merge requests which are assigned to the user with the given ID'
+        optional :scope, type: String, values: %w[created-by-me assigned-to-me all],
+                         desc: 'Return merge requests for the given scope: `created-by-me`, `assigned-to-me` or `all`'
+        optional :my_reaction_emoji, type: String, desc: 'Return issues reacted by the authenticated user by the given emoji'
+        use :pagination
+      end
+    end
+
+    resource :merge_requests do
+      desc 'List merge requests' do
+        success Entities::MergeRequestBasic
+      end
+      params do
+        use :merge_requests_params
+        optional :scope, type: String, values: %w[created-by-me assigned-to-me all], default: 'created-by-me',
+                         desc: 'Return merge requests for the given scope: `created-by-me`, `assigned-to-me` or `all`'
+      end
+      get do
+        authenticate! unless params[:scope] == 'all'
+        merge_requests = find_merge_requests
+
+        options = { with: Entities::MergeRequestBasic,
+                    current_user: current_user }
+
+        if params[:view] == 'simple'
+          options[:with] = Entities::MergeRequestSimple
+        else
+          options[:issuable_metadata] = issuable_meta_data(merge_requests, 'MergeRequest')
+        end
+
+        present merge_requests, options
+      end
+    end
+
+    params do
+      requires :id, type: String, desc: 'The ID of a project'
+    end
+    resource :projects, requirements: API::PROJECT_ENDPOINT_REQUIREMENTS do
+      include TimeTrackingEndpoints
+
       helpers do
         def handle_merge_request_errors!(errors)
           if errors[:project_access].any?
@@ -14,257 +87,234 @@ module API
             error!(errors[:validate_fork], 422)
           elsif errors[:validate_branches].any?
             conflict!(errors[:validate_branches])
+          elsif errors[:base].any?
+            error!(errors[:base], 422)
           end
 
           render_api_error!(errors, 400)
         end
+
+        params :optional_params_ce do
+          optional :description, type: String, desc: 'The description of the merge request'
+          optional :assignee_id, type: Integer, desc: 'The ID of a user to assign the merge request'
+          optional :milestone_id, type: Integer, desc: 'The ID of a milestone to assign the merge request'
+          optional :labels, type: String, desc: 'Comma-separated list of label names'
+          optional :remove_source_branch, type: Boolean, desc: 'Remove source branch when merging'
+        end
+
+        params :optional_params do
+          use :optional_params_ce
+        end
       end
 
-      # List merge requests
-      #
-      # Parameters:
-      #   id (required) - The ID of a project
-      #   iid (optional) - Return the project MR having the given `iid`
-      #   state (optional) - Return requests "merged", "opened" or "closed"
-      #   order_by (optional) - Return requests ordered by `created_at` or `updated_at` fields. Default is `created_at`
-      #   sort (optional) - Return requests sorted in `asc` or `desc` order. Default is `desc`
-      #
-      # Example:
-      #   GET /projects/:id/merge_requests
-      #   GET /projects/:id/merge_requests?state=opened
-      #   GET /projects/:id/merge_requests?state=closed
-      #   GET /projects/:id/merge_requests?order_by=created_at
-      #   GET /projects/:id/merge_requests?order_by=updated_at
-      #   GET /projects/:id/merge_requests?sort=desc
-      #   GET /projects/:id/merge_requests?sort=asc
-      #   GET /projects/:id/merge_requests?iid=42
-      #
+      desc 'List merge requests' do
+        success Entities::MergeRequestBasic
+      end
+      params do
+        use :merge_requests_params
+        optional :iids, type: Array[Integer], desc: 'The IID array of merge requests'
+      end
       get ":id/merge_requests" do
         authorize! :read_merge_request, user_project
-        merge_requests = user_project.merge_requests
 
-        unless params[:iid].nil?
-          merge_requests = filter_by_iid(merge_requests, params[:iid])
+        merge_requests = find_merge_requests(project_id: user_project.id)
+
+        options = { with: Entities::MergeRequestBasic,
+                    current_user: current_user,
+                    project: user_project }
+
+        if params[:view] == 'simple'
+          options[:with] = Entities::MergeRequestSimple
+        else
+          options[:issuable_metadata] = issuable_meta_data(merge_requests, 'MergeRequest')
         end
 
-        merge_requests =
-          case params["state"]
-          when "opened" then merge_requests.opened
-          when "closed" then merge_requests.closed
-          when "merged" then merge_requests.merged
-          else merge_requests
-          end
-
-        merge_requests = merge_requests.reorder(issuable_order_by => issuable_sort)
-        present paginate(merge_requests), with: Entities::MergeRequest
+        present merge_requests, options
       end
 
-      # Show MR
-      #
-      # Parameters:
-      #   id (required)               - The ID of a project
-      #   merge_request_id (required) - The ID of MR
-      #
-      # Example:
-      #   GET /projects/:id/merge_request/:merge_request_id
-      #
-      get ":id/merge_request/:merge_request_id" do
-        merge_request = user_project.merge_requests.find(params[:merge_request_id])
-
-        authorize! :read_merge_request, merge_request
-
-        present merge_request, with: Entities::MergeRequest
+      desc 'Create a merge request' do
+        success Entities::MergeRequest
       end
-
-      # Show MR changes
-      #
-      # Parameters:
-      #   id (required)               - The ID of a project
-      #   merge_request_id (required) - The ID of MR
-      #
-      # Example:
-      #   GET /projects/:id/merge_request/:merge_request_id/changes
-      #
-      get ':id/merge_request/:merge_request_id/changes' do
-        merge_request = user_project.merge_requests.
-          find(params[:merge_request_id])
-        authorize! :read_merge_request, merge_request
-        present merge_request, with: Entities::MergeRequestChanges
+      params do
+        requires :title, type: String, desc: 'The title of the merge request'
+        requires :source_branch, type: String, desc: 'The source branch'
+        requires :target_branch, type: String, desc: 'The target branch'
+        optional :target_project_id, type: Integer,
+                                     desc: 'The target project of the merge request defaults to the :id of the project'
+        use :optional_params
       end
-
-      # Create MR
-      #
-      # Parameters:
-      #
-      #   id (required)            - The ID of a project - this will be the source of the merge request
-      #   source_branch (required) - The source branch
-      #   target_branch (required) - The target branch
-      #   target_project_id        - The target project of the merge request defaults to the :id of the project
-      #   assignee_id              - Assignee user ID
-      #   title (required)         - Title of MR
-      #   description              - Description of MR
-      #   labels (optional)        - Labels for MR as a comma-separated list
-      #
-      # Example:
-      #   POST /projects/:id/merge_requests
-      #
       post ":id/merge_requests" do
         authorize! :create_merge_request, user_project
-        required_attributes! [:source_branch, :target_branch, :title]
-        attrs = attributes_for_keys [:source_branch, :target_branch, :assignee_id, :title, :target_project_id, :description]
 
-        # Validate label names in advance
-        if (errors = validate_label_params(params)).any?
-          render_api_error!({ labels: errors }, 400)
-        end
+        mr_params = declared_params(include_missing: false)
+        mr_params[:force_remove_source_branch] = mr_params.delete(:remove_source_branch)
 
-        merge_request = ::MergeRequests::CreateService.new(user_project, current_user, attrs).execute
+        merge_request = ::MergeRequests::CreateService.new(user_project, current_user, mr_params).execute
 
         if merge_request.valid?
-          # Find or create labels and attach to issue
-          if params[:labels].present?
-            merge_request.add_labels_by_names(params[:labels].split(","))
-          end
-
-          present merge_request, with: Entities::MergeRequest
+          present merge_request, with: Entities::MergeRequest, current_user: current_user, project: user_project
         else
           handle_merge_request_errors! merge_request.errors
         end
       end
 
-      # Update MR
-      #
-      # Parameters:
-      #   id (required)               - The ID of a project
-      #   merge_request_id (required) - ID of MR
-      #   target_branch               - The target branch
-      #   assignee_id                 - Assignee user ID
-      #   title                       - Title of MR
-      #   state_event                 - Status of MR. (close|reopen|merge)
-      #   description                 - Description of MR
-      #   labels (optional)           - Labels for a MR as a comma-separated list
-      # Example:
-      #   PUT /projects/:id/merge_request/:merge_request_id
-      #
-      put ":id/merge_request/:merge_request_id" do
-        attrs = attributes_for_keys [:target_branch, :assignee_id, :title, :state_event, :description]
-        merge_request = user_project.merge_requests.find(params[:merge_request_id])
-        authorize! :update_merge_request, merge_request
+      desc 'Delete a merge request'
+      params do
+        requires :merge_request_iid, type: Integer, desc: 'The IID of a merge request'
+      end
+      delete ":id/merge_requests/:merge_request_iid" do
+        merge_request = find_project_merge_request(params[:merge_request_iid])
 
-        # Ensure source_branch is not specified
-        if params[:source_branch].present?
-          render_api_error!('Source branch cannot be changed', 400)
-        end
+        authorize!(:destroy_merge_request, merge_request)
 
-        # Validate label names in advance
-        if (errors = validate_label_params(params)).any?
-          render_api_error!({ labels: errors }, 400)
-        end
+        destroy_conditionally!(merge_request)
+      end
 
-        merge_request = ::MergeRequests::UpdateService.new(user_project, current_user, attrs).execute(merge_request)
+      params do
+        requires :merge_request_iid, type: Integer, desc: 'The IID of a merge request'
+      end
+      desc 'Get a single merge request' do
+        success Entities::MergeRequest
+      end
+      get ':id/merge_requests/:merge_request_iid' do
+        merge_request = find_merge_request_with_access(params[:merge_request_iid])
+
+        present merge_request, with: Entities::MergeRequest, current_user: current_user, project: user_project
+      end
+
+      desc 'Get the commits of a merge request' do
+        success Entities::Commit
+      end
+      get ':id/merge_requests/:merge_request_iid/commits' do
+        merge_request = find_merge_request_with_access(params[:merge_request_iid])
+        commits = ::Kaminari.paginate_array(merge_request.commits)
+
+        present paginate(commits), with: Entities::Commit
+      end
+
+      desc 'Show the merge request changes' do
+        success Entities::MergeRequestChanges
+      end
+      get ':id/merge_requests/:merge_request_iid/changes' do
+        merge_request = find_merge_request_with_access(params[:merge_request_iid])
+
+        present merge_request, with: Entities::MergeRequestChanges, current_user: current_user
+      end
+
+      desc 'Update a merge request' do
+        success Entities::MergeRequest
+      end
+      params do
+        # CE
+        at_least_one_of_ce = [
+          :assignee_id,
+          :description,
+          :labels,
+          :milestone_id,
+          :remove_source_branch,
+          :state_event,
+          :target_branch,
+          :title
+        ]
+        optional :title, type: String, allow_blank: false, desc: 'The title of the merge request'
+        optional :target_branch, type: String, allow_blank: false, desc: 'The target branch'
+        optional :state_event, type: String, values: %w[close reopen],
+                               desc: 'Status of the merge request'
+
+        use :optional_params
+        at_least_one_of(*at_least_one_of_ce)
+      end
+      put ':id/merge_requests/:merge_request_iid' do
+        merge_request = find_merge_request_with_access(params.delete(:merge_request_iid), :update_merge_request)
+
+        mr_params = declared_params(include_missing: false)
+        mr_params[:force_remove_source_branch] = mr_params.delete(:remove_source_branch) if mr_params[:remove_source_branch].present?
+
+        merge_request = ::MergeRequests::UpdateService.new(user_project, current_user, mr_params).execute(merge_request)
 
         if merge_request.valid?
-          # Find or create labels and attach to issue
-          unless params[:labels].nil?
-            merge_request.remove_labels
-            merge_request.add_labels_by_names(params[:labels].split(","))
-          end
-
-          present merge_request, with: Entities::MergeRequest
+          present merge_request, with: Entities::MergeRequest, current_user: current_user, project: user_project
         else
           handle_merge_request_errors! merge_request.errors
         end
       end
 
-      # Merge MR
-      #
-      # Parameters:
-      #   id (required)                   - The ID of a project
-      #   merge_request_id (required)     - ID of MR
-      #   merge_commit_message (optional) - Custom merge commit message
-      # Example:
-      #   PUT /projects/:id/merge_request/:merge_request_id/merge
-      #
-      put ":id/merge_request/:merge_request_id/merge" do
-        merge_request = user_project.merge_requests.find(params[:merge_request_id])
+      desc 'Merge a merge request' do
+        success Entities::MergeRequest
+      end
+      params do
+        # CE
+        optional :merge_commit_message, type: String, desc: 'Custom merge commit message'
+        optional :should_remove_source_branch, type: Boolean,
+                                               desc: 'When true, the source branch will be deleted if possible'
+        optional :merge_when_pipeline_succeeds, type: Boolean,
+                                                desc: 'When true, this merge request will be merged when the pipeline succeeds'
+        optional :sha, type: String, desc: 'When present, must have the HEAD SHA of the source branch'
+      end
+      put ':id/merge_requests/:merge_request_iid/merge' do
+        merge_request = find_project_merge_request(params[:merge_request_iid])
+        merge_when_pipeline_succeeds = to_boolean(params[:merge_when_pipeline_succeeds])
 
-        allowed = ::Gitlab::GitAccess.new(current_user, user_project).
-          can_push_to_branch?(merge_request.target_branch)
+        # Merge request can not be merged
+        # because user dont have permissions to push into target branch
+        unauthorized! unless merge_request.can_be_merged_by?(current_user)
 
-        if allowed
-          if merge_request.unchecked?
-            merge_request.check_if_can_be_merged
-          end
+        not_allowed! unless merge_request.mergeable_state?(skip_ci_check: merge_when_pipeline_succeeds)
 
-          if merge_request.open? && !merge_request.work_in_progress?
-            if merge_request.can_be_merged?
-              commit_message = params[:merge_commit_message] || merge_request.merge_commit_message
+        render_api_error!('Branch cannot be merged', 406) unless merge_request.mergeable?(skip_ci_check: merge_when_pipeline_succeeds)
 
-              ::MergeRequests::MergeService.new(merge_request.target_project, current_user).
-                execute(merge_request, commit_message)
-
-              present merge_request, with: Entities::MergeRequest
-            else
-              render_api_error!('Branch cannot be merged', 405)
-            end
-          else
-            # Merge request can not be merged
-            # because it is already closed/merged or marked as WIP
-            not_allowed!
-          end
-        else
-          # Merge request can not be merged
-          # because user dont have permissions to push into target branch
-          unauthorized!
+        if params[:sha] && merge_request.diff_head_sha != params[:sha]
+          render_api_error!("SHA does not match HEAD of source branch: #{merge_request.diff_head_sha}", 409)
         end
-      end
 
-
-      # Get a merge request's comments
-      #
-      # Parameters:
-      #   id (required)               - The ID of a project
-      #   merge_request_id (required) - ID of MR
-      # Examples:
-      #   GET /projects/:id/merge_request/:merge_request_id/comments
-      #
-      get ":id/merge_request/:merge_request_id/comments" do
-        merge_request = user_project.merge_requests.find(params[:merge_request_id])
-
-        authorize! :read_merge_request, merge_request
-
-        present paginate(merge_request.notes.fresh), with: Entities::MRNote
-      end
-
-      # Post comment to merge request
-      #
-      # Parameters:
-      #   id (required)               - The ID of a project
-      #   merge_request_id (required) - ID of MR
-      #   note (required)             - Text of comment
-      # Examples:
-      #   POST /projects/:id/merge_request/:merge_request_id/comments
-      #
-      post ":id/merge_request/:merge_request_id/comments" do
-        required_attributes! [:note]
-
-        merge_request = user_project.merge_requests.find(params[:merge_request_id])
-
-        authorize! :create_note, merge_request
-
-        opts = {
-          note: params[:note],
-          noteable_type: 'MergeRequest',
-          noteable_id: merge_request.id
+        merge_params = {
+          commit_message: params[:merge_commit_message],
+          should_remove_source_branch: params[:should_remove_source_branch]
         }
 
-        note = ::Notes::CreateService.new(user_project, current_user, opts).execute
-
-        if note.save
-          present note, with: Entities::MRNote
+        if merge_when_pipeline_succeeds && merge_request.head_pipeline && merge_request.head_pipeline.active?
+          ::MergeRequests::MergeWhenPipelineSucceedsService
+            .new(merge_request.target_project, current_user, merge_params)
+            .execute(merge_request)
         else
-          render_api_error!("Failed to save note #{note.errors.messages}", 400)
+          ::MergeRequests::MergeService
+            .new(merge_request.target_project, current_user, merge_params)
+            .execute(merge_request)
         end
+
+        present merge_request, with: Entities::MergeRequest, current_user: current_user, project: user_project
+      end
+
+      desc 'Cancel merge if "Merge When Pipeline Succeeds" is enabled' do
+        success Entities::MergeRequest
+      end
+      post ':id/merge_requests/:merge_request_iid/cancel_merge_when_pipeline_succeeds' do
+        merge_request = find_project_merge_request(params[:merge_request_iid])
+
+        unauthorized! unless merge_request.can_cancel_merge_when_pipeline_succeeds?(current_user)
+
+        ::MergeRequest::MergeWhenPipelineSucceedsService
+          .new(merge_request.target_project, current_user)
+          .cancel(merge_request)
+      end
+
+      desc 'List issues that will be closed on merge' do
+        success Entities::MRNote
+      end
+      params do
+        use :pagination
+      end
+      get ':id/merge_requests/:merge_request_iid/closes_issues' do
+        merge_request = find_merge_request_with_access(params[:merge_request_iid])
+        issues = ::Kaminari.paginate_array(merge_request.closes_issues(current_user))
+        issues = paginate(issues)
+
+        external_issues, internal_issues = issues.partition { |issue| issue.is_a?(ExternalIssue) }
+
+        data = Entities::IssueBasic.represent(internal_issues, current_user: current_user)
+        data += Entities::ExternalIssue.represent(external_issues, current_user: current_user)
+
+        data.as_json
       end
     end
   end

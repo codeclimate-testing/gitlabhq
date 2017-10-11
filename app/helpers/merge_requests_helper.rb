@@ -1,18 +1,9 @@
 module MergeRequestsHelper
   def new_mr_path_from_push_event(event)
-    target_project = event.project.forked_from_project || event.project
-    new_namespace_project_merge_request_path(
-      event.project.namespace,
+    target_project = event.project.default_merge_request_target
+    project_new_merge_request_path(
       event.project,
       new_mr_from_push_event(event, target_project)
-    )
-  end
-
-  def new_mr_path_for_fork_from_push_event(event)
-    new_namespace_project_merge_request_path(
-      event.project.namespace,
-      event.project,
-      new_mr_from_push_event(event, event.project.forked_from_project)
     )
   end
 
@@ -35,41 +26,37 @@ module MergeRequestsHelper
   end
 
   def ci_build_details_path(merge_request)
-    merge_request.source_project.ci_service.build_page(merge_request.last_commit.sha, merge_request.source_branch)
+    build_url = merge_request.source_project.ci_service.build_page(merge_request.diff_head_sha, merge_request.source_branch)
+    return nil unless build_url
+
+    parsed_url = URI.parse(build_url)
+
+    unless parsed_url.userinfo.blank?
+      parsed_url.userinfo = ''
+    end
+
+    parsed_url.to_s
   end
 
   def merge_path_description(merge_request, separator)
     if merge_request.for_fork?
-      "Project:Branches: #{@merge_request.source_project_path}:#{@merge_request.source_branch} #{separator} #{@merge_request.target_project.path_with_namespace}:#{@merge_request.target_branch}"
+      "Project:Branches: #{@merge_request.source_project_path}:#{@merge_request.source_branch} #{separator} #{@merge_request.target_project.full_path}:#{@merge_request.target_branch}"
     else
       "Branches: #{@merge_request.source_branch} #{separator} #{@merge_request.target_branch}"
     end
   end
 
-  def issues_sentence(issues)
-    issues.map(&:to_reference).to_sentence
-  end
-
   def mr_change_branches_path(merge_request)
-    new_namespace_project_merge_request_path(
-      @project.namespace, @project,
+    project_new_merge_request_path(
+      @project,
       merge_request: {
-        source_project_id: @merge_request.source_project_id,
-        target_project_id: @merge_request.target_project_id,
-        source_branch: @merge_request.source_branch,
-        target_branch: nil
-      }
+        source_project_id: merge_request.source_project_id,
+        target_project_id: merge_request.target_project_id,
+        source_branch: merge_request.source_branch,
+        target_branch: merge_request.target_branch
+      },
+      change_branches: true
     )
-  end
-
-  def source_branch_with_namespace(merge_request)
-    if merge_request.for_fork?
-      namespace = link_to(merge_request.source_project_namespace,
-        project_path(merge_request.source_project))
-      namespace + ":#{merge_request.source_branch}"
-    else
-      merge_request.source_branch
-    end
   end
 
   def format_mr_branch_names(merge_request)
@@ -83,5 +70,37 @@ module MergeRequestsHelper
     else
       ["#{source_path}:#{source_branch}", "#{target_path}:#{target_branch}"]
     end
+  end
+
+  def target_projects(project)
+    [project, project.default_merge_request_target].uniq
+  end
+
+  def merge_request_button_visibility(merge_request, closed)
+    return 'hidden' if merge_request.closed? == closed || (merge_request.merged? == closed && !merge_request.closed?) || merge_request.closed_without_fork?
+  end
+
+  def merge_request_version_path(project, merge_request, merge_request_diff, start_sha = nil)
+    diffs_project_merge_request_path(project, merge_request, diff_id: merge_request_diff.id, start_sha: start_sha)
+  end
+
+  def version_index(merge_request_diff)
+    @merge_request_diffs.size - @merge_request_diffs.index(merge_request_diff)
+  end
+
+  def different_base?(version1, version2)
+    version1 && version2 && version1.base_commit_sha != version2.base_commit_sha
+  end
+
+  def merge_params(merge_request)
+    {
+      merge_when_pipeline_succeeds: true,
+      should_remove_source_branch: true,
+      sha: merge_request.diff_head_sha
+    }.merge(merge_params_ee(merge_request))
+  end
+
+  def merge_params_ee(merge_request)
+    {}
   end
 end

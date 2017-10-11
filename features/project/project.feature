@@ -18,15 +18,7 @@ Feature: Project
     Then I should see the default project avatar
     And I should not see the "Remove avatar" button
 
-  Scenario: I should have back to group button
-    And project "Shop" belongs to group
-    And I visit project "Shop" page
-    Then I should see back to group button
-
-  Scenario: I should have back to group button
-    And I visit project "Shop" page
-    Then I should see back to dashboard button
-
+  @javascript
   Scenario: I should have readme on page
     And I visit project "Shop" page
     Then I should see project "Shop" README
@@ -86,3 +78,9 @@ Feature: Project
     Given I click notifications drop down button
     When I choose Mention setting
     Then I should see Notification saved message
+
+  Scenario: I should see command line instructions
+    Given I own an empty project
+    And I visit my empty project page
+    And I create bare repo
+    Then I should see command line instructions

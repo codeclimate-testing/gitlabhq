@@ -6,26 +6,66 @@
 module Gitlab
   module VisibilityLevel
     extend CurrentSettings
+    extend ActiveSupport::Concern
+
+    included do
+      scope :public_only,               -> { where(visibility_level: PUBLIC) }
+      scope :public_and_internal_only,  -> { where(visibility_level: [PUBLIC, INTERNAL] ) }
+      scope :non_public_only,           -> { where.not(visibility_level: PUBLIC) }
+
+      scope :public_to_user, -> (user = nil) do
+        where(visibility_level: VisibilityLevel.levels_for_user(user))
+      end
+    end
 
     PRIVATE  = 0 unless const_defined?(:PRIVATE)
     INTERNAL = 10 unless const_defined?(:INTERNAL)
     PUBLIC   = 20 unless const_defined?(:PUBLIC)
 
     class << self
-      def values
-        options.values
+      delegate :values, to: :options
+
+      def levels_for_user(user = nil)
+        return [PUBLIC] unless user
+
+        if user.full_private_access?
+          [PRIVATE, INTERNAL, PUBLIC]
+        elsif user.external?
+          [PUBLIC]
+        else
+          [INTERNAL, PUBLIC]
+        end
+      end
+
+      def string_values
+        string_options.keys
       end
 
       def options
         {
-          'Private'  => PRIVATE,
-          'Internal' => INTERNAL,
-          'Public'   => PUBLIC
+          N_('VisibilityLevel|Private')  => PRIVATE,
+          N_('VisibilityLevel|Internal') => INTERNAL,
+          N_('VisibilityLevel|Public')   => PUBLIC
         }
       end
 
+      def string_options
+        {
+          'private'  => PRIVATE,
+          'internal' => INTERNAL,
+          'public'   => PUBLIC
+        }
+      end
+
+      def highest_allowed_level
+        restricted_levels = current_application_settings.restricted_visibility_levels
+
+        allowed_levels = self.values - restricted_levels
+        allowed_levels.max || PRIVATE
+      end
+
       def allowed_for?(user, level)
-        user.is_admin? || allowed_level?(level.to_i)
+        user.admin? || allowed_level?(level.to_i)
       end
 
       # Return true if the specified level is allowed for the current user.
@@ -45,24 +85,50 @@ module Gitlab
       end
 
       def valid_level?(level)
-        options.has_value?(level)
+        options.value?(level)
       end
 
-      def allowed_fork_levels(origin_level)
-        [PRIVATE, INTERNAL, PUBLIC].select{ |level| level <= origin_level }
+      def level_name(level)
+        level_name = N_('VisibilityLevel|Unknown')
+        options.each do |name, lvl|
+          level_name = name if lvl == level.to_i
+        end
+
+        s_(level_name)
+      end
+
+      def level_value(level)
+        return level.to_i if level.to_i.to_s == level.to_s && string_options.key(level.to_i)
+        string_options[level] || PRIVATE
+      end
+
+      def string_level(level)
+        string_options.key(level)
       end
     end
 
     def private?
-      visibility_level_field == PRIVATE
+      visibility_level_value == PRIVATE
     end
 
     def internal?
-      visibility_level_field == INTERNAL
+      visibility_level_value == INTERNAL
     end
 
     def public?
-      visibility_level_field == PUBLIC
+      visibility_level_value == PUBLIC
+    end
+
+    def visibility_level_value
+      self[visibility_level_field]
+    end
+
+    def visibility
+      Gitlab::VisibilityLevel.string_level(visibility_level_value)
+    end
+
+    def visibility=(level)
+      self[visibility_level_field] = Gitlab::VisibilityLevel.level_value(level)
     end
   end
 end

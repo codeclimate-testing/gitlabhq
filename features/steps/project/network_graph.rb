@@ -12,19 +12,19 @@ class Spinach::Features::ProjectNetworkGraph < Spinach::FeatureSteps
     Network::Graph.stub(max_count: 10)
 
     @project = Project.find_by(name: "Shop")
-    visit namespace_project_network_path(@project.namespace, @project, "master")
+    visit project_network_path(@project, "master")
   end
 
   step "I visit project network page on branch 'test'" do
-    visit namespace_project_network_path(@project.namespace, @project, "'test'")
+    visit project_network_path(@project, "'test'")
   end
 
   step 'page should select "master" in select box' do
-    expect(page).to have_selector '.select2-chosen', text: "master"
+    expect(page).to have_selector '.dropdown-menu-toggle', text: "master"
   end
 
   step 'page should select "v1.0.0" in select box' do
-    expect(page).to have_selector '.select2-chosen', text: "v1.0.0"
+    expect(page).to have_selector '.dropdown-menu-toggle', text: "v1.0.0"
   end
 
   step 'page should have "master" on graph' do
@@ -40,18 +40,23 @@ class Spinach::Features::ProjectNetworkGraph < Spinach::FeatureSteps
   end
 
   When 'I switch ref to "feature"' do
-    select 'feature', from: 'ref'
-    sleep 2
+    first('.js-project-refs-dropdown').click
+
+    page.within '.project-refs-form' do
+      click_link 'feature'
+    end
   end
 
   When 'I switch ref to "v1.0.0"' do
-    select 'v1.0.0', from: 'ref'
-    sleep 2
+    first('.js-project-refs-dropdown').click
+
+    page.within '.project-refs-form' do
+      click_link 'v1.0.0'
+    end
   end
 
   When 'click "Show only selected branch" checkbox' do
     find('#filter_ref').click
-    sleep 2
   end
 
   step 'page should have content not containing "v1.0.0"' do
@@ -60,18 +65,22 @@ class Spinach::Features::ProjectNetworkGraph < Spinach::FeatureSteps
     end
   end
 
-  step 'page should not have content not containing "v1.0.0"' do
+  step 'page should have "v1.0.0" in title' do
+    expect(page).to have_css 'title', text: 'Graph · v1.0.0', visible: false
+  end
+
+  step 'page should only have content from "v1.0.0"' do
     page.within '.network-graph' do
       expect(page).not_to have_content 'Change some files'
     end
   end
 
   step 'page should select "feature" in select box' do
-    expect(page).to have_selector '.select2-chosen', text: "feature"
+    expect(page).to have_selector '.dropdown-menu-toggle', text: "feature"
   end
 
   step 'page should select "v1.0.0" in select box' do
-    expect(page).to have_selector '.select2-chosen', text: "v1.0.0"
+    expect(page).to have_selector '.dropdown-menu-toggle', text: "v1.0.0"
   end
 
   step 'page should have "feature" on graph' do
@@ -99,5 +108,9 @@ class Spinach::Features::ProjectNetworkGraph < Spinach::FeatureSteps
       fill_in 'extended_sha1', with: ';'
       find('button').click
     end
+  end
+
+  step 'I should see non-existent git revision error message' do
+    expect(page).to have_selector '.flash-alert', text: "Git revision ';' does not exist."
   end
 end

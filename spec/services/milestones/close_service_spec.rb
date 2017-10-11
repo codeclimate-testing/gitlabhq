@@ -9,16 +9,16 @@ describe Milestones::CloseService do
     project.team << [user, :master]
   end
 
-  describe :execute do
+  describe '#execute' do
     before do
-      Milestones::CloseService.new(project, user, {}).execute(milestone)
+      described_class.new(project, user, {}).execute(milestone)
     end
 
     it { expect(milestone).to be_valid }
     it { expect(milestone).to be_closed }
 
-    describe :event do
-      let(:event) { Event.first }
+    describe 'event' do
+      let(:event) { Event.recent.first }
 
       it { expect(event.milestone).to be_truthy }
       it { expect(event.target).to eq(milestone) }

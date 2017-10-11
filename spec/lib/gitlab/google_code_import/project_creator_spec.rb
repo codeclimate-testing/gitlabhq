@@ -9,7 +9,7 @@ describe Gitlab::GoogleCodeImport::ProjectCreator do
       "repositoryUrls" => ["https://vim.googlecode.com/git/"]
     )
   end
-  let(:namespace){ create(:group, owner: user) }
+  let(:namespace) { create(:group, owner: user) }
 
   before do
     namespace.add_owner(user)
@@ -18,7 +18,7 @@ describe Gitlab::GoogleCodeImport::ProjectCreator do
   it 'creates project' do
     allow_any_instance_of(Project).to receive(:add_import_job)
 
-    project_creator = Gitlab::GoogleCodeImport::ProjectCreator.new(repo, namespace, user)
+    project_creator = described_class.new(repo, namespace, user)
     project = project_creator.execute
 
     expect(project.import_url).to eq("https://vim.googlecode.com/git/")

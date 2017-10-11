@@ -1,44 +1,73 @@
 module Gitlab
   module CurrentSettings
-    def current_application_settings
-      key = :current_application_settings
+    extend self
 
-      RequestStore.store[key] ||= begin
-        if connect_to_db?
-          ApplicationSetting.current || ApplicationSetting.create_from_defaults
-        else
-          fake_application_settings
-        end
+    def current_application_settings
+      if RequestStore.active?
+        RequestStore.fetch(:current_application_settings) { ensure_application_settings! }
+      else
+        ensure_application_settings!
       end
     end
 
-    def fake_application_settings
-      OpenStruct.new(
-        default_projects_limit: Settings.gitlab['default_projects_limit'],
-        default_branch_protection: Settings.gitlab['default_branch_protection'],
-        signup_enabled: Settings.gitlab['signup_enabled'],
-        signin_enabled: Settings.gitlab['signin_enabled'],
-        gravatar_enabled: Settings.gravatar['enabled'],
-        sign_in_text: Settings.extra['sign_in_text'],
-        restricted_visibility_levels: Settings.gitlab['restricted_visibility_levels'],
-        max_attachment_size: Settings.gitlab['max_attachment_size'],
-        session_expire_delay: Settings.gitlab['session_expire_delay'],
-        import_sources: Settings.gitlab['import_sources'],
-        shared_runners_enabled: Settings.gitlab_ci['shared_runners_enabled'],
-        max_artifacts_size: Ci::Settings.gitlab_ci['max_artifacts_size'],
-      )
+    delegate :sidekiq_throttling_enabled?, to: :current_application_settings
+
+    def fake_application_settings(defaults = ::ApplicationSetting.defaults)
+      FakeApplicationSettings.new(defaults)
     end
 
     private
 
-    def connect_to_db?
-      use_db = if ENV['USE_DB'] == "false"
-                 false
-               else
-                 true
-               end
+    def ensure_application_settings!
+      return in_memory_application_settings if ENV['IN_MEMORY_APPLICATION_SETTINGS'] == 'true'
 
-      use_db && ActiveRecord::Base.connection.active? && ActiveRecord::Base.connection.table_exists?('application_settings')
+      cached_application_settings || uncached_application_settings
+    end
+
+    def cached_application_settings
+      begin
+        ::ApplicationSetting.cached
+      rescue ::Redis::BaseError, ::Errno::ENOENT, ::Errno::EADDRNOTAVAIL
+        # In case Redis isn't running or the Redis UNIX socket file is not available
+      end
+    end
+
+    def uncached_application_settings
+      return fake_application_settings unless connect_to_db?
+
+      db_settings = ::ApplicationSetting.current
+
+      # If there are pending migrations, it's possible there are columns that
+      # need to be added to the application settings. To prevent Rake tasks
+      # and other callers from failing, use any loaded settings and return
+      # defaults for missing columns.
+      if ActiveRecord::Migrator.needs_migration?
+        defaults = ::ApplicationSetting.defaults
+        defaults.merge!(db_settings.attributes.symbolize_keys) if db_settings.present?
+        return fake_application_settings(defaults)
+      end
+
+      return db_settings if db_settings.present?
+
+      ::ApplicationSetting.create_from_defaults || in_memory_application_settings
+    end
+
+    def in_memory_application_settings
+      @in_memory_application_settings ||= ::ApplicationSetting.new(::ApplicationSetting.defaults)
+    rescue ActiveRecord::StatementInvalid, ActiveRecord::UnknownAttributeError
+      # In case migrations the application_settings table is not created yet,
+      # we fallback to a simple OpenStruct
+      fake_application_settings
+    end
+
+    def connect_to_db?
+      # When the DBMS is not available, an exception (e.g. PG::ConnectionBad) is raised
+      active_db_connection = ActiveRecord::Base.connection.active? rescue false
+
+      active_db_connection &&
+        ActiveRecord::Base.connection.table_exists?('application_settings')
+    rescue ActiveRecord::NoDatabaseError
+      false
     end
   end
 end

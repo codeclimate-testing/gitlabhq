@@ -1,45 +1,33 @@
-# == Schema Information
-#
-# Table name: ci_variables
-#
-#  id                   :integer          not null, primary key
-#  project_id           :integer          not null
-#  key                  :string(255)
-#  value                :text
-#  encrypted_value      :text
-#  encrypted_value_salt :string(255)
-#  encrypted_value_iv   :string(255)
-#
-
 require 'spec_helper'
 
 describe Ci::Variable do
-  subject { Ci::Variable.new }
+  subject { build(:ci_variable) }
 
-  let(:secret_value) { 'secret' }
-
-  before :each do
-    subject.value = secret_value
+  describe 'validations' do
+    it { is_expected.to include_module(HasVariable) }
+    it { is_expected.to include_module(Presentable) }
+    it { is_expected.to validate_uniqueness_of(:key).scoped_to(:project_id, :environment_scope) }
   end
 
-  describe :value do
-    it 'stores the encrypted value' do
-      expect(subject.encrypted_value).not_to be_nil
+  describe '.unprotected' do
+    subject { described_class.unprotected }
+
+    context 'when variable is protected' do
+      before do
+        create(:ci_variable, :protected)
+      end
+
+      it 'returns nothing' do
+        is_expected.to be_empty
+      end
     end
 
-    it 'stores an iv for value' do
-      expect(subject.encrypted_value_iv).not_to be_nil
-    end
+    context 'when variable is not protected' do
+      let(:variable) { create(:ci_variable, protected: false) }
 
-    it 'stores a salt for value' do
-      expect(subject.encrypted_value_salt).not_to be_nil
-    end
-
-    it 'fails to decrypt if iv is incorrect' do
-      subject.encrypted_value_iv = nil
-      subject.instance_variable_set(:@value, nil)
-      expect { subject.value }.
-        to raise_error(OpenSSL::Cipher::CipherError, 'bad decrypt')
+      it 'returns the variable' do
+        is_expected.to contain_exactly(variable)
+      end
     end
   end
 end

@@ -71,11 +71,11 @@ module Gitlab
       end
 
       def config
-        Gitlab.config.omniauth.providers.find{|provider| provider.name == "gitlab"}
+        Gitlab.config.omniauth.providers.find {|provider| provider.name == "gitlab"}
       end
 
       def gitlab_options
-        OmniAuth::Strategies::GitLab.default_options[:client_options].symbolize_keys
+        OmniAuth::Strategies::GitLab.default_options[:client_options].to_h.symbolize_keys
       end
     end
   end

@@ -84,6 +84,19 @@ describe Gitlab::Sherlock::Transaction do
     end
   end
 
+  describe '#query_duration' do
+    it 'returns the total query duration in seconds' do
+      time   = Time.now
+      query1 = Gitlab::Sherlock::Query.new('SELECT 1', time, time + 5)
+      query2 = Gitlab::Sherlock::Query.new('SELECT 2', time, time + 2)
+
+      transaction.queries << query1
+      transaction.queries << query2
+
+      expect(transaction.query_duration).to be_within(0.1).of(7.0)
+    end
+  end
+
   describe '#to_param' do
     it 'returns the transaction ID' do
       expect(transaction.to_param).to eq(transaction.id)
@@ -96,8 +109,8 @@ describe Gitlab::Sherlock::Transaction do
 
       query1 = Gitlab::Sherlock::Query.new('SELECT 1', start_time, start_time)
 
-      query2 = Gitlab::Sherlock::Query.
-        new('SELECT 2', start_time, start_time + 5)
+      query2 = Gitlab::Sherlock::Query
+        .new('SELECT 2', start_time, start_time + 5)
 
       transaction.queries << query1
       transaction.queries << query2
@@ -149,11 +162,11 @@ describe Gitlab::Sherlock::Transaction do
   describe '#profile_lines' do
     describe 'when line profiling is enabled' do
       it 'yields the block using the line profiler' do
-        allow(Gitlab::Sherlock).to receive(:enable_line_profiler?).
-          and_return(true)
+        allow(Gitlab::Sherlock).to receive(:enable_line_profiler?)
+          .and_return(true)
 
-        allow_any_instance_of(Gitlab::Sherlock::LineProfiler).
-          to receive(:profile).and_return('cats are amazing', [])
+        allow_any_instance_of(Gitlab::Sherlock::LineProfiler)
+          .to receive(:profile).and_return('cats are amazing', [])
 
         retval = transaction.profile_lines { 'cats are amazing' }
 
@@ -163,8 +176,8 @@ describe Gitlab::Sherlock::Transaction do
 
     describe 'when line profiling is disabled' do
       it 'yields the block' do
-        allow(Gitlab::Sherlock).to receive(:enable_line_profiler?).
-          and_return(false)
+        allow(Gitlab::Sherlock).to receive(:enable_line_profiler?)
+          .and_return(false)
 
         retval = transaction.profile_lines { 'cats are amazing' }
 
@@ -183,17 +196,17 @@ describe Gitlab::Sherlock::Transaction do
     end
 
     it 'tracks executed queries' do
-      expect(transaction).to receive(:track_query).
-        with('SELECT 1', [], time, time)
+      expect(transaction).to receive(:track_query)
+        .with('SELECT 1', [], time, time)
 
       subscription.publish('test', time, time, nil, query_data)
     end
 
     it 'only tracks queries triggered from the transaction thread' do
-      expect(transaction).to_not receive(:track_query)
+      expect(transaction).not_to receive(:track_query)
 
-      Thread.new { subscription.publish('test', time, time, nil, query_data) }.
-        join
+      Thread.new { subscription.publish('test', time, time, nil, query_data) }
+        .join
     end
   end
 
@@ -213,10 +226,10 @@ describe Gitlab::Sherlock::Transaction do
     end
 
     it 'only tracks views rendered from the transaction thread' do
-      expect(transaction).to_not receive(:track_view)
+      expect(transaction).not_to receive(:track_view)
 
-      Thread.new { subscription.publish('test', time, time, nil, view_data) }.
-        join
+      Thread.new { subscription.publish('test', time, time, nil, view_data) }
+        .join
     end
   end
 end

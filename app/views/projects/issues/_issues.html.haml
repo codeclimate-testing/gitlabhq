@@ -1,13 +1,9 @@
-%ul.content-list.issues-list
-  = render @issues
+- empty_state_path = local_assigns.fetch(:empty_state_path, 'shared/empty_states/issues')
+
+%ul.content-list.issues-list.issuable-list
+  = render partial: "projects/issues/issue", collection: @issues
   - if @issues.blank?
-    %li
-      .nothing-here-block No issues to show
+    = render empty_state_path
 
 - if @issues.present?
-  .issuable-filter-count
-    %span.pull-right
-      = @issues.total_count
-      issues for this filter
-
-  = paginate @issues, theme: "gitlab"
+  = paginate @issues, theme: "gitlab", total_pages: @total_pages

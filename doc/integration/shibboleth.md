@@ -1,8 +1,8 @@
 # Shibboleth OmniAuth Provider
 
-This documentation is for enabling shibboleth with gitlab-omnibus package.
+This documentation is for enabling shibboleth with omnibus-gitlab package.
 
-In order to enable Shibboleth support in gitlab we need to use Apache instead of Nginx (It may be possible to use Nginx, however I did not found way to easily configure Nginx that is bundled in gitlab-omnibus package). Apache uses mod_shib2 module for shibboleth authentication and can pass attributes as headers to omniauth-shibboleth provider.
+In order to enable Shibboleth support in gitlab we need to use Apache instead of Nginx (It may be possible to use Nginx, however this is difficult to configure using the bundled Nginx provided in the omnibus-gitlab package). Apache uses mod_shib2 module for shibboleth authentication and can pass attributes as headers to omniauth-shibboleth provider.
 
 
 To enable the Shibboleth OmniAuth provider you must:
@@ -10,7 +10,7 @@ To enable the Shibboleth OmniAuth provider you must:
 1. Configure Apache shibboleth module. Installation and configuration of module it self is out of scope of this document.
 Check https://wiki.shibboleth.net/ for more info.
 
-1. You can find Apache config in gitlab-recipes (https://github.com/gitlabhq/gitlab-recipes/blob/master/web-server/apache/gitlab-ssl.conf)
+1. You can find Apache config in gitlab-recipes (https://gitlab.com/gitlab-org/gitlab-recipes/tree/master/web-server/apache)
 
 Following changes are needed to enable shibboleth:
 
@@ -70,9 +70,58 @@ gitlab_rails['omniauth_providers'] = [
 ]
 
 ```
-1. Save changes and reconfigure gitlab:
-```
-sudo gitlab-ctl reconfigure
-```
+
+1. [Reconfigure][] or [restart GitLab][] for the changes to take effect if you
+   installed GitLab via Omnibus or from source respectively.
 
 On the sign in page there should now be a "Sign in with: Shibboleth" icon below the regular sign in form. Click the icon to begin the authentication process. You will be redirected to IdP server (Depends on your Shibboleth module configuration). If everything goes well the user will be returned to GitLab and will be signed in.
+
+## Apache 2.4 / GitLab 8.6 update
+The order of the first 2 Location directives is important. If they are reversed,
+you will not get a shibboleth session!
+
+```
+  <Location />
+    Require all granted
+    ProxyPassReverse http://127.0.0.1:8181
+    ProxyPassReverse http://YOUR_SERVER_FQDN/
+  </Location>
+
+  <Location /users/auth/shibboleth/callback>
+    AuthType shibboleth
+    ShibRequestSetting requireSession 1
+    ShibUseHeaders On
+    Require shib-session
+  </Location>
+
+  Alias /shibboleth-sp /usr/share/shibboleth
+
+  <Location /shibboleth-sp>
+    Require all granted
+  </Location>
+
+  <Location /Shibboleth.sso>
+    SetHandler shib
+  </Location>
+
+  RewriteEngine on
+
+  #Don't escape encoded characters in api requests
+  RewriteCond %{REQUEST_URI} ^/api/v3/.*
+  RewriteCond %{REQUEST_URI} !/Shibboleth.sso
+  RewriteCond %{REQUEST_URI} !/shibboleth-sp
+  RewriteRule .* http://127.0.0.1:8181%{REQUEST_URI} [P,QSA,NE]
+
+  #Forward all requests to gitlab-workhorse except existing files
+  RewriteCond %{DOCUMENT_ROOT}/%{REQUEST_FILENAME} !-f [OR]
+  RewriteCond %{REQUEST_URI} ^/uploads/.*
+  RewriteCond %{REQUEST_URI} !/Shibboleth.sso
+  RewriteCond %{REQUEST_URI} !/shibboleth-sp
+  RewriteRule .* http://127.0.0.1:8181%{REQUEST_URI} [P,QSA]
+
+  RequestHeader set X_FORWARDED_PROTO 'https'
+  RequestHeader set X-Forwarded-Ssl on
+```
+
+[reconfigure]: ../administration/restart_gitlab.md#omnibus-gitlab-reconfigure
+[restart GitLab]: ../administration/restart_gitlab.md#installations-from-source

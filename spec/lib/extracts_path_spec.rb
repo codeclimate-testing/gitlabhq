@@ -1,11 +1,12 @@
 require 'spec_helper'
 
 describe ExtractsPath do
-  include ExtractsPath
+  include described_class
   include RepoHelpers
-  include Gitlab::Application.routes.url_helpers
+  include Gitlab::Routing
 
   let(:project) { double('project') }
+  let(:request) { double('request') }
 
   before do
     @project = project
@@ -13,30 +14,125 @@ describe ExtractsPath do
     repo = double(ref_names: ['master', 'foo/bar/baz', 'v1.0.0', 'v2.0.0',
                               'release/app', 'release/app/v1.0.0'])
     allow(project).to receive(:repository).and_return(repo)
-    allow(project).to receive(:path_with_namespace).
-      and_return('gitlab/gitlab-ci')
+    allow(project).to receive(:full_path)
+      .and_return('gitlab/gitlab-ci')
+    allow(request).to receive(:format=)
   end
 
-  describe '#assign_ref' do
+  describe '#assign_ref_vars' do
     let(:ref) { sample_commit[:id] }
     let(:params) { { path: sample_commit[:line_code_path], ref: ref } }
 
     before do
-      @project = create(:project)
+      @project = create(:project, :repository)
     end
 
-    it "log tree path should have no escape sequences" do
+    it "log tree path has no escape sequences" do
       assign_ref_vars
-      expect(@logs_path).to eq("/#{@project.path_with_namespace}/refs/#{ref}/logs_tree/files/ruby/popen.rb")
+      expect(@logs_path).to eq("/#{@project.full_path}/refs/#{ref}/logs_tree/files/ruby/popen.rb")
     end
 
-    context 'escaped sequences in ref' do
-      let(:ref) { "improve%2Fawesome" }
+    context 'ref contains %20' do
+      let(:ref) { 'foo%20bar' }
 
-      it "id should have no escape sequences" do
+      it 'is not converted to a space in @id' do
+        @project.repository.add_branch(@project.owner, 'foo%20bar', 'master')
+
         assign_ref_vars
-        expect(@ref).to eq('improve/awesome')
-        expect(@logs_path).to eq("/#{@project.path_with_namespace}/refs/#{ref}/logs_tree/files/ruby/popen.rb")
+
+        expect(@id).to start_with('foo%20bar/')
+      end
+    end
+
+    context 'path contains space' do
+      let(:params) { { path: 'with space', ref: '38008cb17ce1466d8fec2dfa6f6ab8dcfe5cf49e' } }
+
+      it 'is not converted to %20 in @path' do
+        assign_ref_vars
+
+        expect(@path).to eq(params[:path])
+      end
+    end
+
+    context 'subclass overrides get_id' do
+      it 'uses ref returned by get_id' do
+        allow_any_instance_of(self.class).to receive(:get_id) { '38008cb17ce1466d8fec2dfa6f6ab8dcfe5cf49e' }
+
+        assign_ref_vars
+
+        expect(@id).to eq(get_id)
+      end
+    end
+
+    context 'ref only exists without .atom suffix' do
+      context 'with a path' do
+        let(:params) { { ref: 'v1.0.0.atom', path: 'README.md' } }
+
+        it 'renders a 404' do
+          expect(self).to receive(:render_404)
+
+          assign_ref_vars
+        end
+      end
+
+      context 'without a path' do
+        let(:params) { { ref: 'v1.0.0.atom' } }
+
+        before do
+          assign_ref_vars
+        end
+
+        it 'sets the un-suffixed version as @ref' do
+          expect(@ref).to eq('v1.0.0')
+        end
+
+        it 'sets the request format to Atom' do
+          expect(request).to have_received(:format=).with(:atom)
+        end
+      end
+    end
+
+    context 'ref exists with .atom suffix' do
+      context 'with a path' do
+        let(:params) { { ref: 'master.atom', path: 'README.md' } }
+
+        before do
+          repository = @project.repository
+          allow(repository).to receive(:commit).and_call_original
+          allow(repository).to receive(:commit).with('master.atom').and_return(repository.commit('master'))
+
+          assign_ref_vars
+        end
+
+        it 'sets the suffixed version as @ref' do
+          expect(@ref).to eq('master.atom')
+        end
+
+        it 'does not change the request format' do
+          expect(request).not_to have_received(:format=)
+        end
+      end
+
+      context 'without a path' do
+        let(:params) { { ref: 'master.atom' } }
+
+        before do
+          repository = @project.repository
+          allow(repository).to receive(:commit).and_call_original
+          allow(repository).to receive(:commit).with('master.atom').and_return(repository.commit('master'))
+        end
+
+        it 'sets the suffixed version as @ref' do
+          assign_ref_vars
+
+          expect(@ref).to eq('master.atom')
+        end
+
+        it 'does not change the request format' do
+          expect(request).not_to receive(:format=)
+
+          assign_ref_vars
+        end
       end
     end
   end
@@ -84,13 +180,27 @@ describe ExtractsPath do
 
       it "extracts a valid commit SHA" do
         expect(extract_ref('f4b14494ef6abf3d144c28e4af0c20143383e062/CHANGELOG')).to eq(
-          ['f4b14494ef6abf3d144c28e4af0c20143383e062', 'CHANGELOG']
+          %w(f4b14494ef6abf3d144c28e4af0c20143383e062 CHANGELOG)
         )
       end
 
       it "falls back to a primitive split for an invalid ref" do
-        expect(extract_ref('stable/CHANGELOG')).to eq(['stable', 'CHANGELOG'])
+        expect(extract_ref('stable/CHANGELOG')).to eq(%w(stable CHANGELOG))
       end
+    end
+  end
+
+  describe '#extract_ref_without_atom' do
+    it 'ignores any matching refs suffixed with atom' do
+      expect(extract_ref_without_atom('master.atom')).to eq('master')
+    end
+
+    it 'returns the longest matching ref' do
+      expect(extract_ref_without_atom('release/app/v1.0.0.atom')).to eq('release/app/v1.0.0')
+    end
+
+    it 'returns nil if there are no matching refs' do
+      expect(extract_ref_without_atom('foo.atom')).to eq(nil)
     end
   end
 end

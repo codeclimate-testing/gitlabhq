@@ -1,14 +1,23 @@
 module NamespacesHelper
-  def namespaces_options(selected = :current_user, scope = :default)
-    groups = current_user.owned_groups + current_user.masters_groups
-    users = [current_user.namespace]
+  def namespace_id_from(params)
+    params.dig(:project, :namespace_id) || params[:namespace_id]
+  end
 
-    group_opts = ["Groups", groups.sort_by(&:human_name).map {|g| [g.human_name, g.id]} ]
-    users_opts = [ "Users", users.sort_by(&:human_name).map {|u| [u.human_name, u.id]} ]
+  def namespaces_options(selected = :current_user, display_path: false, extra_group: nil)
+    groups  = current_user.owned_groups + current_user.masters_groups
+    users   = [current_user.namespace]
+
+    unless extra_group.nil? || extra_group.is_a?(Group)
+      extra_group = Group.find(extra_group) if Namespace.find(extra_group).kind == 'group'
+    end
+
+    if extra_group && extra_group.is_a?(Group) && (!Group.exists?(name: extra_group.name) || Ability.allowed?(current_user, :read_group, extra_group))
+      groups |= [extra_group]
+    end
 
     options = []
-    options << group_opts
-    options << users_opts
+    options << options_for_group(groups, display_path: display_path, type: 'group')
+    options << options_for_group(users, display_path: display_path, type: 'user')
 
     if selected == :current_user && current_user.namespace
       selected = current_user.namespace.id
@@ -17,20 +26,30 @@ module NamespacesHelper
     grouped_options_for_select(options, selected)
   end
 
-  def namespace_select_tag(id, opts = {})
-    css_class = "ajax-namespace-select "
-    css_class << "multiselect " if opts[:multiple]
-    css_class << (opts[:class] || '')
-    value = opts[:selected] || ''
-
-    hidden_field_tag(id, value, class: css_class)
-  end
-
   def namespace_icon(namespace, size = 40)
-    if namespace.kind_of?(Group)
+    if namespace.is_a?(Group)
       group_icon(namespace)
     else
       avatar_icon(namespace.owner.email, size)
     end
+  end
+
+  private
+
+  def options_for_group(namespaces, display_path:, type:)
+    group_label = type.pluralize
+    elements = namespaces.sort_by(&:human_name).map! do |n|
+      [display_path ? n.full_path : n.human_name, n.id,
+       data: {
+         options_parent: group_label,
+         visibility_level: n.visibility_level_value,
+         visibility: n.visibility,
+         name: n.name,
+         show_path: (type == 'group') ? group_path(n) : user_path(n),
+         edit_path: (type == 'group') ? edit_group_path(n) : nil
+       }]
+    end
+
+    [group_label.camelize, elements]
   end
 end

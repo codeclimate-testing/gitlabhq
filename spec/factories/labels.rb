@@ -1,22 +1,24 @@
-# == Schema Information
-#
-# Table name: labels
-#
-#  id         :integer          not null, primary key
-#  title      :string(255)
-#  color      :string(255)
-#  project_id :integer
-#  created_at :datetime
-#  updated_at :datetime
-#  template   :boolean          default(FALSE)
-#
-
-# Read about factories at https://github.com/thoughtbot/factory_girl
-
 FactoryGirl.define do
-  factory :label do
-    title "Bug"
+  trait :base_label do
+    title { generate(:label_title) }
     color "#990000"
+  end
+
+  factory :label, traits: [:base_label], class: ProjectLabel do
     project
+
+    transient do
+      priority nil
+    end
+
+    after(:create) do |label, evaluator|
+      if evaluator.priority
+        label.priorities.create(project: label.project, priority: evaluator.priority)
+      end
+    end
+  end
+
+  factory :group_label, traits: [:base_label] do
+    group
   end
 end

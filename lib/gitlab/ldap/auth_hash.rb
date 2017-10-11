@@ -17,7 +17,7 @@ module Gitlab
           value = value.first if value
           break if value.present?
         end
-        
+
         return super unless value
 
         Gitlab::Utils.force_utf8(value)
@@ -25,7 +25,7 @@ module Gitlab
       end
 
       def get_raw(key)
-        auth_hash.extra[:raw_info][key]
+        auth_hash.extra[:raw_info][key] if auth_hash.extra
       end
 
       def ldap_config

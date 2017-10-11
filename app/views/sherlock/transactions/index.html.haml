@@ -1,7 +1,7 @@
 - page_title t('sherlock.title')
 - header_title t('sherlock.title'), sherlock_transactions_path
 
-.gray-content-block
+.row-content-block
   .pull-right
     = link_to(destroy_all_sherlock_transactions_path,
       class: 'btn btn-danger',
@@ -28,7 +28,7 @@
           %tr
             %td= trans.type
             %td
-              %span{title: trans.path}
+              %span{ title: trans.path }
                 = truncate(trans.path, length: 70)
             %td
               = trans.duration.round(2)

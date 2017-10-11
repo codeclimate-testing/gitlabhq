@@ -72,8 +72,8 @@ describe Gitlab::Sherlock::Middleware do
         'REQUEST_URI' => '/cats'
       }
 
-      expect(middleware.transaction_from_env(env)).
-        to be_an_instance_of(Gitlab::Sherlock::Transaction)
+      expect(middleware.transaction_from_env(env))
+        .to be_an_instance_of(Gitlab::Sherlock::Transaction)
     end
   end
 end

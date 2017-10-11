@@ -16,7 +16,9 @@ class Spinach::Features::ProjectIssuesMilestones < Spinach::FeatureSteps
   end
 
   step 'I click link "New Milestone"' do
-    click_link "New Milestone"
+    page.within('.nav-controls') do
+      click_link "New milestone"
+    end
   end
 
   step 'I submit new milestone "v2.3"' do
@@ -59,11 +61,11 @@ class Spinach::Features::ProjectIssuesMilestones < Spinach::FeatureSteps
   end
 
   step 'I should see 3 issues' do
-    expect(page).to have_selector('#tab-issues li.issue-row', count: 4)
+    expect(page).to have_selector('#tab-issues li.issuable-row', count: 4)
   end
 
   step 'I click link to remove milestone' do
-    click_link 'Remove'
+    click_link 'Delete'
   end
 
   step 'I should see no milestones' do

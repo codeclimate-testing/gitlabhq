@@ -2,14 +2,16 @@ class Spinach::Features::Project < Spinach::FeatureSteps
   include SharedAuthentication
   include SharedProject
   include SharedPaths
+  include WaitForRequests
 
   step 'change project settings' do
     fill_in 'project_name_edit', with: 'NewName'
-    uncheck 'project_issues_enabled'
   end
 
   step 'I save project' do
-    click_button 'Save changes'
+    page.within '.general-settings' do
+      click_button 'Save changes'
+    end
   end
 
   step 'I should see project with new settings' do
@@ -30,14 +32,16 @@ class Spinach::Features::Project < Spinach::FeatureSteps
       :project_avatar,
       File.join(Rails.root, 'spec', 'fixtures', 'banana_sample.gif')
     )
-    click_button 'Save changes'
+    page.within '.general-settings' do
+      click_button 'Save changes'
+    end
     @project.reload
   end
 
   step 'I should see new project avatar' do
     expect(@project.avatar).to be_instance_of AvatarUploader
     url = @project.avatar.url
-    expect(url).to eq "/uploads/project/avatar/#{ @project.id }/banana_sample.gif"
+    expect(url).to eq "/uploads/-/system/project/avatar/#{@project.id}/banana_sample.gif"
   end
 
   step 'I should see the "Remove avatar" button' do
@@ -49,7 +53,9 @@ class Spinach::Features::Project < Spinach::FeatureSteps
       :project_avatar,
       File.join(Rails.root, 'spec', 'fixtures', 'banana_sample.gif')
     )
-    click_button 'Save changes'
+    page.within '.general-settings' do
+      click_button 'Save changes'
+    end
     @project.reload
   end
 
@@ -66,15 +72,11 @@ class Spinach::Features::Project < Spinach::FeatureSteps
     expect(page).not_to have_link('Remove avatar')
   end
 
-  step 'I should see project "Shop" version' do
-    page.within '.project-side' do
-      expect(page).to have_content '6.7.0.pre'
-    end
-  end
-
   step 'change project default branch' do
     select 'fix', from: 'project_default_branch'
-    click_button 'Save changes'
+    page.within '.general-settings' do
+      click_button 'Save changes'
+    end
   end
 
   step 'I should see project default branch changed' do
@@ -92,6 +94,7 @@ class Spinach::Features::Project < Spinach::FeatureSteps
   end
 
   step 'I should see project "Shop" README' do
+    wait_for_requests
     page.within('.readme-holder') do
       expect(page).to have_content 'testme'
     end
@@ -114,7 +117,9 @@ class Spinach::Features::Project < Spinach::FeatureSteps
   end
 
   step 'I should not see "Snippets" button' do
-    expect(page).not_to have_link 'Snippets'
+    page.within '.content' do
+      expect(page).not_to have_link 'Snippets'
+    end
   end
 
   step 'project "Shop" belongs to group' do
@@ -123,16 +128,8 @@ class Spinach::Features::Project < Spinach::FeatureSteps
     @project.save!
   end
 
-  step 'I should see back to dashboard button' do
-    expect(page).to have_content 'Go to dashboard'
-  end
-
-  step 'I should see back to group button' do
-    expect(page).to have_content 'Go to group'
-  end
-
   step 'I click notifications drop down button' do
-    click_link 'notifications-button'
+    first('.notifications-btn').click
   end
 
   step 'I choose Mention setting' do
@@ -140,8 +137,18 @@ class Spinach::Features::Project < Spinach::FeatureSteps
   end
 
   step 'I should see Notification saved message' do
-    page.within '.flash-container' do
-      expect(page).to have_content 'Notification settings saved'
+    page.within '#notifications-button' do
+      expect(page).to have_content 'On mention'
+    end
+  end
+
+  step 'I create bare repo' do
+    click_link 'Create empty bare repository'
+  end
+
+  step 'I should see command line instructions' do
+    page.within ".empty_wrapper" do
+      expect(page).to have_content("Command line instructions")
     end
   end
 end

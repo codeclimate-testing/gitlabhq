@@ -8,17 +8,17 @@ module Gitlab
 
         import_data = project.import_data.try(:data)
         repo_data = import_data['repo'] if import_data
-        @repo = FogbugzImport::Repository.new(repo_data)
-
-        @known_labels = Set.new
+        if repo_data
+          @repo = FogbugzImport::Repository.new(repo_data)
+          @known_labels = Set.new
+        else
+          raise Projects::ImportService::Error, "Unable to find project import data credentials for project ID: #{@project.id}"
+        end
       end
 
       def execute
         return true unless repo.valid?
-
-        data = project.import_data.try(:data)
-
-        client = Gitlab::FogbugzImport::Client.new(token: data['fb_session']['token'], uri: data['fb_session']['uri'])
+        client = Gitlab::FogbugzImport::Client.new(token: fb_session[:token], uri: fb_session[:uri])
 
         @cases = client.cases(@repo.id.to_i)
         @categories = client.categories
@@ -29,6 +29,10 @@ module Gitlab
       end
 
       private
+
+      def fb_session
+        @import_data_credentials ||= project.import_data.credentials[:fb_session] if project.import_data && project.import_data.credentials
+      end
 
       def user_map
         @user_map ||= begin
@@ -70,8 +74,8 @@ module Gitlab
       end
 
       def create_label(name)
-        color = nice_label_color(name)
-        Label.create!(project_id: project.id, title: name, color: color)
+        params = { title: name, color: nice_label_color(name) }
+        ::Labels::FindOrCreateService.new(nil, project, params).execute(skip_authorization: true)
       end
 
       def user_info(person_id)
@@ -118,25 +122,21 @@ module Gitlab
           author_id = user_info(bug['ixPersonOpenedBy'])[:gitlab_id] || project.creator_id
 
           issue = Issue.create!(
+            iid:          bug['ixBug'],
             project_id:   project.id,
             title:        bug['sTitle'],
             description:  body,
             author_id:    author_id,
-            assignee_id:  assignee_id,
-            state:        bug['fOpen'] == 'true' ? 'opened' : 'closed'
+            assignee_ids: [assignee_id],
+            state:        bug['fOpen'] == 'true' ? 'opened' : 'closed',
+            created_at:   date,
+            updated_at:   DateTime.parse(bug['dtLastUpdated'])
           )
-          issue.add_labels_by_names(labels)
 
-          if issue.iid != bug['ixBug']
-            issue.update_attribute(:iid, bug['ixBug'])
-          end
+          issue_labels = ::LabelsFinder.new(nil, project_id: project.id, title: labels).execute(skip_authorization: true)
+          issue.update_attribute(:label_ids, issue_labels.pluck(:id))
 
           import_issue_comments(issue, comments)
-
-          issue.update_attribute(:created_at, date)
-
-          last_update = DateTime.parse(bug['dtLastUpdated'])
-          issue.update_attribute(:updated_at, last_update)
         end
       end
 
@@ -199,7 +199,7 @@ module Gitlab
         s = s.gsub(/^#/, "\\#")
         s = s.gsub(/^-/, "\\-")
         s = s.gsub("`", "\\~")
-        s = s.gsub("\r", "")
+        s = s.delete("\r")
         s = s.gsub("\n", "  \n")
         s
       end
@@ -232,15 +232,12 @@ module Gitlab
 
         return nil if res.nil?
 
-        text = "[#{res['alt']}](#{res['url']})"
-        text = "!#{text}" if res['is_image']
-        text
+        res[:markdown]
       end
 
       def build_attachment_url(rel_url)
-        data = project.import_data.try(:data)
-        uri = data['fb_session']['uri']
-        token = data['fb_session']['token']
+        uri = fb_session[:uri]
+        token = fb_session[:token]
         "#{uri}/#{rel_url}&token=#{token}"
       end
 

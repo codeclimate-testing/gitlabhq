@@ -1,22 +1,28 @@
 class Notify < BaseMailer
   include ActionDispatch::Routing::PolymorphicRoutes
+  include GitlabRoutingHelper
 
   include Emails::Issues
   include Emails::MergeRequests
   include Emails::Notes
   include Emails::Projects
   include Emails::Profile
-  include Emails::Groups
+  include Emails::Pipelines
+  include Emails::Members
 
-  add_template_helper MergeRequestsHelper
-  add_template_helper EmailsHelper
+  helper MergeRequestsHelper
+  helper DiffHelper
+  helper BlobHelper
+  helper EmailsHelper
+  helper MembersHelper
+  helper GitlabRoutingHelper
 
   def test_email(recipient_email, subject, body)
     mail(to: recipient_email,
          subject: subject,
          body: body.html_safe,
          content_type: 'text/html'
-    )
+        )
   end
 
   # Splits "gitlab.corp.company.com" up into "gitlab.corp.company.com",
@@ -33,12 +39,12 @@ class Notify < BaseMailer
     allowed_domains
   end
 
-  private
-
   def can_send_from_user_email?(sender)
     sender_domain = sender.email.split("@").last
     self.class.allowed_email_domains.include?(sender_domain)
   end
+
+  private
 
   # Return an email address that displays the name of the sender.
   # Only the displayed name changes; the actual email address is always the same.
@@ -87,6 +93,7 @@ class Notify < BaseMailer
     subject = ""
     subject << "#{@project.name} | " if @project
     subject << extra.join(' | ') if extra.present?
+    subject << " | #{Gitlab.config.gitlab.email_subject_suffix}" if Gitlab.config.gitlab.email_subject_suffix.present?
     subject
   end
 
@@ -99,21 +106,21 @@ class Notify < BaseMailer
   end
 
   def mail_thread(model, headers = {})
-    if @project
-      headers['X-GitLab-Project'] = @project.name
-      headers['X-GitLab-Project-Id'] = @project.id
-      headers['X-GitLab-Project-Path'] = @project.path_with_namespace
-    end
+    add_project_headers
+    add_unsubscription_headers_and_links
 
     headers["X-GitLab-#{model.class.name}-ID"] = model.id
+    headers['X-GitLab-Reply-Key'] = reply_key
 
-    if reply_key
-      headers['X-GitLab-Reply-Key'] = reply_key
-
+    if Gitlab::IncomingEmail.enabled? && @sent_notification
       address = Mail::Address.new(Gitlab::IncomingEmail.reply_address(reply_key))
       address.display_name = @project.name_with_namespace
 
       headers['Reply-To'] = address
+
+      fallback_reply_message_id = "<reply-#{reply_key}@#{Gitlab.config.gitlab.host}>".freeze
+      headers['References'] ||= ''
+      headers['References'] << ' ' << fallback_reply_message_id
 
       @reply_by_email = true
     end
@@ -144,12 +151,32 @@ class Notify < BaseMailer
     headers['In-Reply-To'] = message_id(model)
     headers['References'] = message_id(model)
 
-    headers[:subject].prepend('Re: ') if headers[:subject]
+    headers[:subject]&.prepend('Re: ')
 
     mail_thread(model, headers)
   end
 
   def reply_key
     @reply_key ||= SentNotification.reply_key
+  end
+
+  def add_project_headers
+    return unless @project
+
+    headers['X-GitLab-Project'] = @project.name
+    headers['X-GitLab-Project-Id'] = @project.id
+    headers['X-GitLab-Project-Path'] = @project.full_path
+  end
+
+  def add_unsubscription_headers_and_links
+    return unless !@labels_url && @sent_notification && @sent_notification.unsubscribable?
+
+    list_unsubscribe_methods = [unsubscribe_sent_notification_url(@sent_notification, force: true)]
+    if Gitlab::IncomingEmail.enabled? && Gitlab::IncomingEmail.supports_wildcard?
+      list_unsubscribe_methods << "mailto:#{Gitlab::IncomingEmail.unsubscribe_address(reply_key)}"
+    end
+
+    headers['List-Unsubscribe'] = list_unsubscribe_methods.map { |e| "<#{e}>" }.join(',')
+    @unsubscribe_url = unsubscribe_sent_notification_url(@sent_notification)
   end
 end

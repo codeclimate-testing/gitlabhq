@@ -1,23 +1,16 @@
 class UsersController < ApplicationController
+  include RoutableActions
+
   skip_before_action :authenticate_user!
-  before_action :set_user
+  before_action :user, except: [:exists]
 
   def show
-    @contributed_projects = contributed_projects.joined(@user).
-      reject(&:forked?)
-
-    @projects = @user.personal_projects.
-      where(id: authorized_projects_ids).includes(:namespace)
-
-    # Collect only groups common for both users
-    @groups = @user.groups & GroupsFinder.new.execute(current_user)
-
     respond_to do |format|
       format.html
 
       format.atom do
         load_events
-        render layout: false
+        render layout: 'xml.atom'
       end
 
       format.json do
@@ -27,55 +20,123 @@ class UsersController < ApplicationController
     end
   end
 
-  def calendar
-    calendar = contributions_calendar
-    @timestamps = calendar.timestamps
-    @starting_year = calendar.starting_year
-    @starting_month = calendar.starting_month
+  def groups
+    load_groups
 
-    render 'calendar', layout: false
+    respond_to do |format|
+      format.html { render 'show' }
+      format.json do
+        render json: {
+          html: view_to_html_string("shared/groups/_list", groups: @groups)
+        }
+      end
+    end
+  end
+
+  def projects
+    load_projects
+
+    respond_to do |format|
+      format.html { render 'show' }
+      format.json do
+        render json: {
+          html: view_to_html_string("shared/projects/_list", projects: @projects)
+        }
+      end
+    end
+  end
+
+  def contributed
+    load_contributed_projects
+
+    respond_to do |format|
+      format.html { render 'show' }
+      format.json do
+        render json: {
+          html: view_to_html_string("shared/projects/_list", projects: @contributed_projects)
+        }
+      end
+    end
+  end
+
+  def snippets
+    load_snippets
+
+    respond_to do |format|
+      format.html { render 'show' }
+      format.json do
+        render json: {
+          html: view_to_html_string("snippets/_snippets", collection: @snippets)
+        }
+      end
+    end
+  end
+
+  def calendar
+    render json: contributions_calendar.activity_dates
   end
 
   def calendar_activities
-    @calendar_date = Date.parse(params[:date]) rescue nil
-    @events = []
-
-    if @calendar_date
-      @events = contributions_calendar.events_by_date(@calendar_date)
-    end
+    @calendar_date = Date.parse(params[:date]) rescue Date.today
+    @events = contributions_calendar.events_by_date(@calendar_date)
 
     render 'calendar_activities', layout: false
   end
 
-  private
-
-  def set_user
-    @user = User.find_by_username!(params[:username])
+  def exists
+    render json: { exists: !!Namespace.find_by_path_or_name(params[:username]) }
   end
 
-  def authorized_projects_ids
-    # Projects user can view
-    @authorized_projects_ids ||=
-      ProjectsFinder.new.execute(current_user).pluck(:id)
+  private
+
+  def user
+    @user ||= find_routable!(User, params[:username])
   end
 
   def contributed_projects
-    @contributed_projects = Project.
-      where(id: authorized_projects_ids & @user.contributed_projects_ids).
-      includes(:namespace)
+    ContributedProjectsFinder.new(user).execute(current_user)
   end
 
   def contributions_calendar
-    @contributions_calendar ||= Gitlab::ContributionsCalendar.
-      new(contributed_projects.reject(&:forked?), @user)
+    @contributions_calendar ||= Gitlab::ContributionsCalendar.new(user, current_user)
   end
 
   def load_events
     # Get user activity feed for projects common for both users
-    @events = @user.recent_events.
-      where(project_id: authorized_projects_ids).
-      with_associations
+    @events = user.recent_events
+      .merge(projects_for_current_user)
+      .references(:project)
+      .with_associations
+      .limit_recent(20, params[:offset])
+  end
 
-    @events = @events.limit(20).offset(params[:offset] || 0)
+  def load_projects
+    @projects =
+      PersonalProjectsFinder.new(user).execute(current_user)
+      .page(params[:page])
+  end
+
+  def load_contributed_projects
+    @contributed_projects = contributed_projects.joined(user)
+  end
+
+  def load_groups
+    @groups = JoinedGroupsFinder.new(user).execute(current_user)
+  end
+
+  def load_snippets
+    @snippets = SnippetsFinder.new(
+      current_user,
+      author: user,
+      scope: params[:scope]
+    ).execute.page(params[:page])
+  end
+
+  def projects_for_current_user
+    ProjectsFinder.new(current_user: current_user).execute
+  end
+
+  def build_canonical_path(user)
+    url_for(params.merge(username: user.to_param))
   end
 end

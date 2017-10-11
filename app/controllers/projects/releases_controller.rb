@@ -10,9 +10,16 @@ class Projects::ReleasesController < Projects::ApplicationController
   end
 
   def update
-    release.update_attributes(release_params)
+    # Release belongs to Tag which is not active record object,
+    # it exists only to save a description to each Tag.
+    # If description is empty we should destroy the existing record.
+    if release_params[:description].present?
+      release.update_attributes(release_params)
+    else
+      release.destroy
+    end
 
-    redirect_to namespace_project_tag_path(@project.namespace, @project, @tag.name)
+    redirect_to project_tag_path(@project, @tag.name)
   end
 
   private

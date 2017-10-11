@@ -1,23 +1,20 @@
-# == Schema Information
-#
-# Table name: protected_branches
-#
-#  id                  :integer          not null, primary key
-#  project_id          :integer          not null
-#  name                :string(255)      not null
-#  created_at          :datetime
-#  updated_at          :datetime
-#  developers_can_push :boolean          default(FALSE), not null
-#
-
 class ProtectedBranch < ActiveRecord::Base
   include Gitlab::ShellAdapter
+  include ProtectedRef
 
-  belongs_to :project
-  validates :name, presence: true
-  validates :project, presence: true
+  extend Gitlab::CurrentSettings
 
-  def commit
-    project.commit(self.name)
+  protected_ref_access_levels :merge, :push
+
+  # Check if branch name is marked as protected in the system
+  def self.protected?(project, ref_name)
+    return true if project.empty_repo? && default_branch_protected?
+
+    self.matching(ref_name, protected_refs: project.protected_branches).present?
+  end
+
+  def self.default_branch_protected?
+    current_application_settings.default_branch_protection == Gitlab::Access::PROTECTION_FULL ||
+      current_application_settings.default_branch_protection == Gitlab::Access::PROTECTION_DEV_CAN_MERGE
   end
 end

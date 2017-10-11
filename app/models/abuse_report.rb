@@ -1,21 +1,26 @@
-# == Schema Information
-#
-# Table name: abuse_reports
-#
-#  id          :integer          not null, primary key
-#  reporter_id :integer
-#  user_id     :integer
-#  message     :text
-#  created_at  :datetime
-#  updated_at  :datetime
-#
-
 class AbuseReport < ActiveRecord::Base
+  include CacheMarkdownField
+
+  cache_markdown_field :message, pipeline: :single_line
+
   belongs_to :reporter, class_name: 'User'
   belongs_to :user
 
   validates :reporter, presence: true
   validates :user, presence: true
   validates :message, presence: true
-  validates :user_id, uniqueness: true
+  validates :user_id, uniqueness: { message: 'has already been reported' }
+
+  # For CacheMarkdownField
+  alias_method :author, :reporter
+
+  def remove_user(deleted_by:)
+    user.delete_async(deleted_by: deleted_by, params: { hard_delete: true })
+  end
+
+  def notify
+    return unless self.persisted?
+
+    AbuseReportMailer.notify(self.id).deliver_later
+  end
 end

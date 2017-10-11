@@ -1,33 +1,8 @@
-# == Schema Information
-#
-# Table name: merge_requests
-#
-#  id                :integer          not null, primary key
-#  target_branch     :string(255)      not null
-#  source_branch     :string(255)      not null
-#  source_project_id :integer          not null
-#  author_id         :integer
-#  assignee_id       :integer
-#  title             :string(255)
-#  created_at        :datetime
-#  updated_at        :datetime
-#  milestone_id      :integer
-#  state             :string(255)
-#  merge_status      :string(255)
-#  target_project_id :integer          not null
-#  iid               :integer
-#  description       :text
-#  position          :integer          default(0)
-#  locked_at         :datetime
-#  updated_by_id     :integer
-#  merge_error       :string(255)
-#
-
 FactoryGirl.define do
   factory :merge_request do
-    title
+    title { generate(:title) }
     author
-    source_project factory: :project
+    association :source_project, :repository, factory: :project
     target_project { source_project }
 
     # $ git log --pretty=oneline feature..master
@@ -47,17 +22,30 @@ FactoryGirl.define do
     trait :with_diffs do
     end
 
+    trait :without_diffs do
+      source_branch "improve/awesome"
+      target_branch "master"
+    end
+
     trait :conflict do
       source_branch "feature_conflict"
       target_branch "feature"
+    end
+
+    trait :merged do
+      state :merged
     end
 
     trait :closed do
       state :closed
     end
 
-    trait :reopened do
-      state :reopened
+    trait :opened do
+      state :opened
+    end
+
+    trait :locked do
+      state :locked
     end
 
     trait :simple do
@@ -65,8 +53,50 @@ FactoryGirl.define do
       target_branch "master"
     end
 
+    trait :rebased do
+      source_branch "markdown"
+      target_branch "improve/awesome"
+    end
+
+    trait :diverged do
+      source_branch "feature"
+      target_branch "master"
+    end
+
+    trait :merge_when_pipeline_succeeds do
+      merge_when_pipeline_succeeds true
+      merge_user author
+    end
+
+    after(:build) do |merge_request|
+      target_project = merge_request.target_project
+      source_project = merge_request.source_project
+
+      # Fake `write_ref` if we don't have repository
+      # We have too many existing tests replying on this behaviour
+      unless [target_project, source_project].all?(&:repository_exists?)
+        allow(merge_request).to receive(:write_ref)
+      end
+    end
+
+    factory :merged_merge_request, traits: [:merged]
     factory :closed_merge_request, traits: [:closed]
-    factory :reopened_merge_request, traits: [:reopened]
+    factory :reopened_merge_request, traits: [:opened]
     factory :merge_request_with_diffs, traits: [:with_diffs]
+    factory :merge_request_with_diff_notes do
+      after(:create) do |mr|
+        create(:diff_note_on_merge_request, noteable: mr, project: mr.source_project)
+      end
+    end
+
+    factory :labeled_merge_request do
+      transient do
+        labels []
+      end
+
+      after(:create) do |merge_request, evaluator|
+        merge_request.update_attributes(labels: evaluator.labels)
+      end
+    end
   end
 end

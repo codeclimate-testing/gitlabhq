@@ -13,7 +13,7 @@ module Gitlab
         Gitlab::LDAP::Config.new(provider)
       end
 
-      def initialize(provider, ldap=nil)
+      def initialize(provider, ldap = nil)
         @provider = provider
         @ldap = ldap || Net::LDAP.new(config.adapter_options)
       end
@@ -22,32 +22,8 @@ module Gitlab
         Gitlab::LDAP::Config.new(provider)
       end
 
-      def users(field, value, limit = nil)
-        if field.to_sym == :dn
-          options = {
-            base: value,
-            scope: Net::LDAP::SearchScope_BaseObject
-          }
-        else
-          options = {
-            base: config.base,
-            filter: Net::LDAP::Filter.eq(field, value)
-          }
-        end
-
-        if config.user_filter.present?
-          user_filter = Net::LDAP::Filter.construct(config.user_filter)
-
-          options[:filter] = if options[:filter]
-                               Net::LDAP::Filter.join(options[:filter], user_filter)
-                             else
-                               user_filter
-                             end
-        end
-
-        if limit.present?
-          options.merge!(size: limit)
-        end
+      def users(fields, value, limit = nil)
+        options = user_options(Array(fields), value, limit)
 
         entries = ldap_search(options).select do |entry|
           entry.respond_to? config.uid
@@ -70,18 +46,61 @@ module Gitlab
       end
 
       def ldap_search(*args)
-        results = ldap.search(*args)
+        # Net::LDAP's `time` argument doesn't work. Use Ruby `Timeout` instead.
+        Timeout.timeout(config.timeout) do
+          results = ldap.search(*args)
 
-        if results.nil?
-          response = ldap.get_operation_result
+          if results.nil?
+            response = ldap.get_operation_result
 
-          unless response.code.zero?
-            Rails.logger.warn("LDAP search error: #{response.message}")
+            unless response.code.zero?
+              Rails.logger.warn("LDAP search error: #{response.message}")
+            end
+
+            []
+          else
+            results
           end
+        end
+      rescue Net::LDAP::Error => error
+        Rails.logger.warn("LDAP search raised exception #{error.class}: #{error.message}")
+        []
+      rescue Timeout::Error
+        Rails.logger.warn("LDAP search timed out after #{config.timeout} seconds")
+        []
+      end
 
-          []
+      private
+
+      def user_options(fields, value, limit)
+        options = {
+          attributes: Gitlab::LDAP::Person.ldap_attributes(config).compact.uniq,
+          base: config.base
+        }
+
+        options[:size] = limit if limit
+
+        if fields.include?('dn')
+          raise ArgumentError, 'It is not currently possible to search the DN and other fields at the same time.' if fields.size > 1
+
+          options[:base] = value
+          options[:scope] = Net::LDAP::SearchScope_BaseObject
         else
-          results
+          filter = fields.map { |field| Net::LDAP::Filter.eq(field, value) }.inject(:|)
+        end
+
+        options.merge(filter: user_filter(filter))
+      end
+
+      def user_filter(filter = nil)
+        user_filter = config.constructed_user_filter if config.user_filter.present?
+
+        if user_filter && filter
+          Net::LDAP::Filter.join(filter, user_filter)
+        elsif user_filter
+          user_filter
+        else
+          filter
         end
       end
     end

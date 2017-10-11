@@ -17,8 +17,23 @@ module Gitlab
         adapter.user('dn', dn)
       end
 
+      def self.find_by_email(email, adapter)
+        email_fields = adapter.config.attributes['email']
+
+        adapter.user(email_fields, email)
+      end
+
       def self.disabled_via_active_directory?(dn, adapter)
         adapter.dn_matches_filter?(dn, AD_USER_DISABLED)
+      end
+
+      def self.ldap_attributes(config)
+        [
+          'dn', # Used in `dn`
+          config.uid, # Used in `uid`
+          *config.attributes['name'], # Used in `name`
+          *config.attributes['email'] # Used in `email`
+        ]
       end
 
       def initialize(entry, provider)
@@ -28,11 +43,11 @@ module Gitlab
       end
 
       def name
-        entry.cn.first
+        attribute_value(:name).first
       end
 
       def uid
-        entry.send(config.uid).first
+        entry.public_send(config.uid).first # rubocop:disable GitlabSecurity/PublicSend
       end
 
       def username
@@ -40,12 +55,10 @@ module Gitlab
       end
 
       def email
-        entry.try(:mail)
+        attribute_value(:email)
       end
 
-      def dn
-        entry.dn
-      end
+      delegate :dn, to: :entry
 
       private
 
@@ -55,6 +68,19 @@ module Gitlab
 
       def config
         @config ||= Gitlab::LDAP::Config.new(provider)
+      end
+
+      # Using the LDAP attributes configuration, find and return the first
+      # attribute with a value. For example, by default, when given 'email',
+      # this method looks for 'mail', 'email' and 'userPrincipalName' and
+      # returns the first with a value.
+      def attribute_value(attribute)
+        attributes = Array(config.attributes[attribute.to_s])
+        selected_attr = attributes.find { |attr| entry.respond_to?(attr) }
+
+        return nil unless selected_attr
+
+        entry.public_send(selected_attr) # rubocop:disable GitlabSecurity/PublicSend
       end
     end
   end

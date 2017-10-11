@@ -1,23 +1,28 @@
-%h3 Shared runners
+%h3 Shared Runners
 
-.bs-callout.bs-callout-warning
-  GitLab Runners do not offer secure isolation between projects that they do builds for. You are TRUSTING all GitLab users who can push code to project A, B or C to run shell scripts on the machine hosting runner X.
-  %hr
-  - if @ci_project.shared_runners_enabled
-    = link_to toggle_shared_runners_ci_project_path(@ci_project), class: 'btn btn-warning', method: :post do
-      Disable shared runners
+.bs-callout.bs-callout-warning.shared-runners-description
+  - if current_application_settings.shared_runners_text.present?
+    = markdown_field(current_application_settings, :shared_runners_text)
   - else
-    = link_to toggle_shared_runners_ci_project_path(@ci_project), class: 'btn btn-success', method: :post do
-      Enable shared runners
+    GitLab Shared Runners execute code of different projects on the same Runner
+    unless you configure GitLab Runner Autoscale with MaxBuilds 1 (which it is
+    on GitLab.com).
+  %hr
+  - if @project.shared_runners_enabled?
+    = link_to toggle_shared_runners_project_runners_path(@project), class: 'btn btn-warning', method: :post do
+      Disable shared Runners
+  - else
+    = link_to toggle_shared_runners_project_runners_path(@project), class: 'btn btn-success', method: :post do
+      Enable shared Runners
   &nbsp; for this project
 
 - if @shared_runners_count.zero?
-  This application has no shared runners yet.
-  Please use specific runners or ask administrator to create one
+  This GitLab server does not provide any shared Runners yet.
+  Please use the specific Runners or ask your administrator to create one.
 - else
-  %h4.underlined-title Available shared runners - #{@shared_runners_count}
+  %h4.underlined-title Available shared Runners : #{@shared_runners_count}
   %ul.bordered-list.available-shared-runners
-    = render partial: 'runner', collection: @shared_runners, as: :runner
+    = render partial: 'projects/runners/runner', collection: @shared_runners, as: :runner
   - if @shared_runners_count > 10
     .light
       and #{@shared_runners_count - 10} more...

@@ -1,32 +1,10 @@
-.page-with-sidebar {
-  .sidebar-wrapper {
-    position: fixed;
-    top: 0;
-    bottom: 0;
-    overflow-y: auto;
-    overflow-x: hidden;
-    left: 0;
-    height: 100%;
-    transition-duration: .3s;
-  }
-}
-
-.sidebar-wrapper {
-  z-index: 99;
-  background: $background-color;
-  transition-duration: .3s;
-}
-
 .content-wrapper {
-  min-height: 100vh;
   width: 100%;
-  padding: 20px;
-  background: #EAEBEC;
+  transition: padding $sidebar-transition-duration;
 
   .container-fluid {
-    background: #FFF;
-    padding: $gl-padding;
-    min-height: 90vh;
+    background: $white-light;
+    padding: 0 $gl-padding;
 
     &.container-blank {
       background: none;
@@ -36,248 +14,125 @@
   }
 }
 
-.nav-sidebar {
-  margin-top: 14 + $header-height;
-  margin-bottom: 100px;
+.nav-header-btn {
+  padding: 10px $gl-sidebar-padding;
+  color: inherit;
   transition-duration: .3s;
-  list-style: none;
-  overflow: hidden;
+  position: absolute;
+  top: 0;
+  cursor: pointer;
 
-  &.navbar-collapse {
-    padding: 0px !important;
+  &:hover,
+  &:focus {
+    color: $white-light;
+    text-decoration: none;
   }
+}
 
-  li {
-    width: $sidebar_width;
+.right-sidebar-collapsed {
+  padding-right: 0;
 
-    &.separate-item {
-      padding-top: 10px;
-      margin-top: 10px;
+  @media (min-width: $screen-sm-min) {
+    &:not(.wiki-sidebar):not(.build-sidebar):not(.issuable-bulk-update-sidebar) .content-wrapper {
+      padding-right: $gutter_collapsed_width;
     }
 
-    a {
-      padding: 7px 15px;
-      font-size: $gl-font-size;
-      line-height: 24px;
-      color: $gray;
-      display: block;
-      text-decoration: none;
-      padding-left: 22px;
-      font-weight: normal;
-      outline: none;
+    .merge-request-tabs-holder.affix {
+      right: $gutter_collapsed_width;
+    }
+  }
 
-      &:hover {
-        text-decoration: none;
-      }
+  .sidebar-collapsed-icon {
+    cursor: pointer;
 
-      &:active, &:focus {
-        text-decoration: none;
-      }
-
-      i {
-        width: 16px;
-        color: $gray-light;
-        margin-right: 13px;
-      }
-
-      .count {
-        float: right;
-        background: #eee;
-        padding: 0px 8px;
-        @include border-radius(6px);
-      }
+    .btn {
+      background-color: $gray-light;
     }
   }
 }
 
-.sidebar-subnav {
-  margin-left: 0px;
-  padding-left: 0px;
+.right-sidebar-expanded {
+  padding-right: 0;
+  z-index: 300;
 
-  li {
-    list-style: none;
+  @media (min-width: $screen-sm-min) and (max-width: $screen-sm-max) {
+    &:not(.wiki-sidebar):not(.build-sidebar):not(.issuable-bulk-update-sidebar) .content-wrapper {
+      padding-right: $gutter_collapsed_width;
+    }
   }
-}
 
-@mixin expanded-sidebar {
-  padding-left: $sidebar_width;
-  transition-duration: .3s;
-
-  .sidebar-wrapper {
-    width: $sidebar_width;
-
-    .nav-sidebar {
-      width: $sidebar_width;
+  @media (min-width: $screen-md-min) {
+    .content-wrapper {
+      padding-right: $gutter_width;
     }
 
-    .nav-sidebar li a{
-      width: 230px;
+    &:not(.with-overlay) .merge-request-tabs-holder.affix {
+      right: $gutter_width;
+    }
 
-      &.back-link {
-        i {
-          visibility: hidden;
-        }
-      }
+    &.with-overlay .merge-request-tabs-holder.affix {
+      right: $gutter_collapsed_width;
     }
   }
 }
 
-@mixin folded-sidebar {
-  padding-left: 60px;
-  transition-duration: .3s;
+.right-sidebar {
+  border-left: 1px solid $border-color;
+  height: calc(100% - #{$new-navbar-height});
 
-  .sidebar-wrapper {
-    width: $sidebar_collapsed_width;
+  &.affix {
+    position: fixed;
+    top: $new-navbar-height;
+  }
+}
 
-    .header-logo {
-      width: $sidebar_collapsed_width;
+.with-performance-bar .right-sidebar.affix {
+  top: $new-navbar-height + $performance-bar-height;
+}
 
-      a {
-        padding-left: 12px;
+@mixin maintain-sidebar-dimensions {
+  display: block;
+  width: $gutter-width;
+}
 
-        .gitlab-text-container {
-          display: none;
-        }
-      }
+.issues-bulk-update.right-sidebar {
+  @include maintain-sidebar-dimensions;
+  width: 0;
+  padding: 0;
+  transition: width $sidebar-transition-duration;
+
+  &.right-sidebar-expanded {
+    @include maintain-sidebar-dimensions;
+    width: $gutter-width;
+
+    .issuable-sidebar-header {
+      // matches `.top-area .nav-controls` for issuable index pages
+      padding: 11px 0;
     }
 
-    .nav-sidebar {
-      width: $sidebar_collapsed_width;
-
-      li a {
-        span {
-          display: none;
-        }
-      }
-    }
-
-    .collapse-nav a {
-      width: $sidebar_collapsed_width;
-    }
-
-    .sidebar-user {
-      padding-left: 12px;
-      width: $sidebar_collapsed_width;
-
-      .username {
-        display: none;
-      }
+    .block:last-of-type {
+      border: none;
     }
   }
-}
 
-.collapse-nav a {
-  width: $sidebar_width;
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  font-size: 13px;
-  background: transparent;
-  height: 40px;
-  text-align: center;
-  line-height: 40px;
-  transition-duration: .3s;
-  outline: none;
-}
+  &.right-sidebar-collapsed {
+    @include maintain-sidebar-dimensions;
+    width: 0;
+    padding: 0;
 
-.collapse-nav a:hover {
-  text-decoration: none;
-  background: #f2f6f7;
-}
-
-@media (max-width: $screen-md-max) {
-  .page-sidebar-collapsed {
-    @include folded-sidebar;
-  }
-
-  .page-sidebar-expanded {
-    @include folded-sidebar;
-  }
-
-  .collapse-nav {
-    display: none;
-  }
-}
-
-@media(min-width: $screen-md-max) {
-  .page-sidebar-collapsed {
-    @include folded-sidebar;
-  }
-
-  .page-sidebar-expanded {
-    @include expanded-sidebar;
-  }
-}
-
-.sidebar-user {
-  padding: 9px 22px;
-  position: fixed;
-  bottom: 40px;
-  width: $sidebar_width;
-  overflow: hidden;
-  transition-duration: .3s;
-
-  .username {
-    margin-left: 10px;
-    width: $sidebar_width - 2 * 10px;
-    font-size: 16px;
-    line-height: 34px;
-  }
-}
-
-.sidebar-wrapper {
-  .header-logo {
-    border-bottom: 1px solid transparent;
-    float: left;
-    height: $header-height;
-    width: $sidebar_width;
-    overflow: hidden;
-    transition-duration: .3s;
-
-    a {
-      float: left;
-      height: $header-height;
-      width: 100%;
-      padding: 10px 22px;
-      overflow: hidden;
-      outline: none;
-
-      img {
-        width: 36px;
-        height: 36px;
-      }
-
-      #tanuki-logo, img {
-        float: left;
-      }
-
-      .gitlab-text-container {
-        width: 230px;
-
-        h3 {
-          width: 158px;
-          float: left;
-          margin: 0;
-          margin-left: 14px;
-          font-size: 19px;
-          line-height: 41px;
-          font-weight: normal;
-        }
-      }
-    }
-
-    &:hover {
-      background-color: #EEE;
+    .block {
+      padding: 16px 0;
+      width: 250px;
+      border-bottom: 1px solid $border-color;
     }
   }
+
+  .issuable-sidebar {
+    padding: 0 3px;
+    width: calc(100% + 35px);
+  }
 }
 
-
-.tanuki-shape {
-  transition: all 0.8s;
-
-  &:hover {
-    fill: rgb(255, 255, 255);
-    transition: all 0.1s;
-  }
+.issuable-sidebar {
+  @include new-style-dropdown;
 }

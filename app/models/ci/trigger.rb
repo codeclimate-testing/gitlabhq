@@ -1,26 +1,15 @@
-# == Schema Information
-#
-# Table name: ci_triggers
-#
-#  id         :integer          not null, primary key
-#  token      :string(255)
-#  project_id :integer          not null
-#  deleted_at :datetime
-#  created_at :datetime
-#  updated_at :datetime
-#
-
 module Ci
   class Trigger < ActiveRecord::Base
-    extend Ci::Model
+    extend Gitlab::Ci::Model
 
     acts_as_paranoid
 
-    belongs_to :project, class_name: 'Ci::Project'
-    has_many :trigger_requests, dependent: :destroy, class_name: 'Ci::TriggerRequest'
+    belongs_to :project
+    belongs_to :owner, class_name: "User"
 
-    validates_presence_of :token
-    validates_uniqueness_of :token
+    has_many :trigger_requests
+
+    validates :token, presence: true, uniqueness: true
 
     before_validation :set_default_values
 
@@ -32,8 +21,20 @@ module Ci
       trigger_requests.last
     end
 
+    def last_used
+      last_trigger_request.try(:created_at)
+    end
+
     def short_token
-      token[0...10]
+      token[0...4]
+    end
+
+    def legacy?
+      self.owner_id.blank?
+    end
+
+    def can_access_project?
+      self.owner_id.blank? || Ability.allowed?(self.owner, :create_build, project)
     end
   end
 end

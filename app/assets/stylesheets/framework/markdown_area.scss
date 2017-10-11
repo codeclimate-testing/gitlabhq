@@ -1,36 +1,25 @@
 .div-dropzone-wrapper {
   .div-dropzone {
     position: relative;
-    padding: 0;
-    border: 0;
-    margin-bottom: 5px;
-
-    .div-dropzone-focus {
-      border-color: #66afe9 !important;
-      box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.075), 0 0 8px rgba(102, 175, 233, 0.6) !important;
-      outline: 0 !important;
-    }
 
     .div-dropzone-hover {
       position: absolute;
       top: 50%;
       left: 50%;
-      margin-top: -0.5em;
-      margin-left: -0.6em;
+      margin-top: -11.5px;
+      margin-left: -15px;
       opacity: 0;
-      font-size: 50px;
+      font-size: 30px;
       transition: opacity 200ms ease-in-out;
       pointer-events: none;
     }
 
     .div-dropzone-spinner {
       position: absolute;
-      top: 100%;
-      left: 100%;
-      margin-top: -1.1em;
-      margin-left: -1.1em;
+      bottom: 10px;
+      right: 5px;
       opacity: 0;
-      font-size: 30px;
+      font-size: 20px;
       transition: opacity 200ms ease-in-out;
     }
 
@@ -66,51 +55,168 @@
 }
 
 .md-header {
-  ul {
-    float: left;
-    margin-bottom: 1px;
-  }
-}
+  .nav-links {
+    a {
+      padding-top: 0;
+      line-height: 19px;
 
-.referenced-users {
-  padding: 10px 0;
-  color: #999;
-  margin-left: 10px;
-  margin-top: 1px;
-  margin-right: 130px;
-}
+      &.btn.btn-xs {
+        padding: 2px 5px;
+      }
 
-.md-preview-holder {
-  background: #FFF;
-  border: 1px solid #ddd;
-  min-height: 169px;
-  padding: 5px;
-  box-shadow: none;
-}
-
-.new_note,
-.edit_note,
-.issuable-description,
-.milestone-description,
-.wiki-content,
-.merge-request-form {
-  .nav-tabs {
-    margin-bottom: 0;
-    border: none;
-
-    li a,
-    li.active a {
-      border: 1px solid #DDD;
+      &:focus {
+        margin-top: -10px;
+        padding-top: 10px;
+      }
     }
   }
 }
 
+.referenced-users {
+  color: $gl-text-color;
+  padding-top: 10px;
+}
+
+.md-preview-holder {
+  min-height: 167px;
+  padding: 10px 0;
+  overflow-x: auto;
+}
+
 .markdown-area {
-  @include border-radius(0);
-  background: #FFF;
-  border: 1px solid #ddd;
+  border-radius: 0;
+  background: $white-light;
+  border: 1px solid $md-area-border;
   min-height: 140px;
+  max-height: 500px;
   padding: 5px;
   box-shadow: none;
   width: 100%;
+}
+
+.md {
+  &.md-preview-holder {
+    // Reset ul style types since we're nested inside a ul already
+    @include bulleted-list;
+  }
+
+  // On diffs code should wrap nicely and not overflow
+  code {
+    white-space: pre-wrap;
+    word-break: keep-all;
+  }
+
+  hr {
+    // Darken 'whitesmoke' a bit to make it more visible in note bodies
+    border-color: darken($gray-normal, 8%);
+    margin: 10px 0;
+  }
+
+  // Border around images in issue and MR comments.
+  img:not(.emoji) {
+    border: 1px solid $white-normal;
+    padding: 5px;
+    margin: 5px 0;
+    // Ensure that image does not exceed viewport
+    max-height: calc(100vh - 100px);
+  }
+
+  table {
+    @include markdown-table;
+  }
+}
+
+.toolbar-group {
+  float: left;
+  margin-right: -5px;
+  margin-left: $gl-padding;
+
+  &:first-child {
+    margin-left: 0;
+  }
+}
+
+.toolbar-btn {
+  float: left;
+  padding: 0 5px;
+  color: $gl-text-color-secondary;
+  background: transparent;
+  border: 0;
+  outline: 0;
+
+  &:hover,
+  &:focus {
+    color: $gl-link-color;
+  }
+}
+
+.atwho-view {
+  overflow-y: auto;
+  overflow-x: hidden;
+
+  small.description {
+    float: right;
+    padding: 3px 5px;
+  }
+
+  .avatar-inline {
+    margin-bottom: 0;
+  }
+
+  .cur {
+    .avatar {
+      @include disableAllAnimation;
+      border: 1px solid $white-light;
+    }
+  }
+
+  ul > li {
+    white-space: nowrap;
+  }
+}
+
+@media(max-width: $screen-xs-max) {
+  .atwho-view-ul {
+    width: 350px;
+  }
+
+  .atwho-view ul li {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+// TODO: fallback to global style
+.atwho-view {
+  .atwho-view-ul {
+    padding: 8px 1px;
+
+    li {
+      padding: 8px 16px;
+      border: 0;
+
+      &.cur {
+        background-color: $gray-darker;
+        color: $gl-text-color;
+
+        small {
+          color: inherit;
+        }
+      }
+
+      div.avatar {
+        display: inline-flex;
+        justify-content: center;
+        align-items: center;
+
+        .center {
+          line-height: 14px;
+        }
+      }
+
+      strong {
+        color: $gl-text-color;
+      }
+    }
+  }
 }

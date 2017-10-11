@@ -1,7 +1,7 @@
 .ci-body {
   .project-title {
     margin: 0;
-    color: #444;
+    color: $common-gray-dark;
     font-size: 20px;
     line-height: 1.5;
   }
@@ -12,16 +12,17 @@
       border-color: $border-color;
     }
 
-    th, td {
+    th,
+    td {
       padding: 10px $gl-padding;
     }
 
     td {
-      color: $gl-gray;
+      color: $gl-text-color;
       vertical-align: middle !important;
 
       a {
-        font-weight: normal;
+        font-weight: $gl-font-weight-normal;
         text-decoration: none;
       }
     }
@@ -35,14 +36,13 @@
     pre.commit-message {
       background: none;
       padding: 0;
-      margin: 0;
       border: none;
       margin: 20px 0;
       border-radius: 0;
     }
   }
 
-  .loading{
+  .loading {
     font-size: 20px;
   }
 

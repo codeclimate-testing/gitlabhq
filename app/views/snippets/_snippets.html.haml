@@ -1,7 +1,10 @@
-%ul.bordered-list
-  = render partial: 'shared/snippets/snippet', collection: @snippets
-  - if @snippets.empty?
-    %li
-      .nothing-here-block Nothing here.
+- link_project = local_assigns.fetch(:link_project, false)
 
-= paginate @snippets, theme: 'gitlab'
+.snippets-list-holder
+  %ul.content-list
+    = render partial: 'shared/snippets/snippet', collection: @snippets, locals: { link_project: link_project }
+    - if @snippets.empty?
+      %li
+        .nothing-here-block Nothing here.
+
+  = paginate @snippets, theme: 'gitlab'

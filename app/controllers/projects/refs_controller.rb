@@ -13,26 +13,24 @@ class Projects::RefsController < Projects::ApplicationController
         new_path =
           case params[:destination]
           when "tree"
-            namespace_project_tree_path(@project.namespace, @project, @id)
+            project_tree_path(@project, @id)
           when "blob"
-            namespace_project_blob_path(@project.namespace, @project, @id)
+            project_blob_path(@project, @id)
           when "graph"
-            namespace_project_network_path(@project.namespace, @project, @id, @options)
+            project_network_path(@project, @id, @options)
           when "graphs"
-            namespace_project_graph_path(@project.namespace, @project, @id)
+            project_graph_path(@project, @id)
+          when "find_file"
+            project_find_file_path(@project, @id)
           when "graphs_commits"
-            commits_namespace_project_graph_path(@project.namespace, @project, @id)
+            commits_project_graph_path(@project, @id)
+          when "badges"
+            project_pipelines_settings_path(@project, ref: @id)
           else
-            namespace_project_commits_path(@project.namespace, @project, @id)
+            project_commits_path(@project, @id)
           end
 
         redirect_to new_path
-      end
-      format.js do
-        @ref = params[:ref]
-        define_tree_vars
-        tree
-        render "tree"
       end
     end
   end
@@ -53,18 +51,21 @@ class Projects::RefsController < Projects::ApplicationController
     contents.push(*tree.blobs)
     contents.push(*tree.submodules)
 
-    @logs = contents[@offset, @limit].to_a.map do |content|
-      file = @path ? File.join(@path, content.name) : content.name
-      last_commit = @repo.last_commit_for_path(@commit.id, file)
-      {
-        file_name: content.name,
-        commit: last_commit
-      }
+    # n+1: https://gitlab.com/gitlab-org/gitlab-ce/issues/37433
+    @logs = Gitlab::GitalyClient.allow_n_plus_1_calls do
+      contents[@offset, @limit].to_a.map do |content|
+        file = @path ? File.join(@path, content.name) : content.name
+        last_commit = @repo.last_commit_for_path(@commit.id, file)
+        {
+          file_name: content.name,
+          commit: last_commit
+        }
+      end
     end
 
-    if @logs.present?
-      @log_url = namespace_project_tree_url(@project.namespace, @project, tree_join(@ref, @path || '/'))
-      @more_log_url = logs_file_namespace_project_ref_path(@project.namespace, @project, @ref, @path || '', offset: (@offset +  @limit))
+    offset = (@offset + @limit)
+    if contents.size > offset
+      @more_log_url = logs_file_project_ref_path(@project, @ref, @path || '', offset: offset)
     end
 
     respond_to do |format|
@@ -76,6 +77,6 @@ class Projects::RefsController < Projects::ApplicationController
   private
 
   def validate_ref_id
-    return not_found! if params[:id].present? && params[:id] !~ Gitlab::Regex.git_reference_regex
+    return not_found! if params[:id].present? && params[:id] !~ Gitlab::PathRegex.git_reference_regex
   end
 end

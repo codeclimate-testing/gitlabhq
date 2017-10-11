@@ -1,3 +1,4 @@
+@project_commits
 Feature: Project Commits Branches
   Background:
     Given I sign in as a user
@@ -12,6 +13,7 @@ Feature: Project Commits Branches
     Given I visit project protected branches page
     Then I should see "Shop" protected branches list
 
+  @javascript
   Scenario: I create a branch
     Given I visit project branches page
     And I click new branch link
@@ -21,21 +23,18 @@ Feature: Project Commits Branches
   @javascript
   Scenario: I delete a branch
     Given I visit project branches page
+    And I filter for branch improve/awesome
     And I click branch 'improve/awesome' delete link
     Then I should not see branch 'improve/awesome'
 
+  @javascript
   Scenario: I create a branch with invalid name
     Given I visit project branches page
     And I click new branch link
     And I submit new branch form with invalid name
     Then I should see new an error that branch is invalid
 
-  Scenario: I create a branch with invalid reference
-    Given I visit project branches page
-    And I click new branch link
-    And I submit new branch form with invalid reference
-    Then I should see new an error that ref is invalid
-
+  @javascript
   Scenario: I create a branch that already exists
     Given I visit project branches page
     And I click new branch link

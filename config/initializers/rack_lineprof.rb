@@ -1,8 +1,8 @@
 # The default colors of rack-lineprof can be very hard to look at in terminals
 # with darker backgrounds. This patch tweaks the colors a bit so the output is
 # actually readable.
-if Rails.env.development? and RUBY_ENGINE == 'ruby' and ENV['ENABLE_LINEPROF']
-  Gitlab::Application.config.middleware.use(Rack::Lineprof)
+if Rails.env.development? && RUBY_ENGINE == 'ruby' && ENV['ENABLE_LINEPROF']
+  Rails.application.config.middleware.use(Rack::Lineprof)
 
   module Rack
     class Lineprof

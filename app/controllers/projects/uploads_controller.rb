@@ -1,30 +1,12 @@
 class Projects::UploadsController < Projects::ApplicationController
-  skip_before_action :authenticate_user!, :reject_blocked!, :project,
-    :repository, if: -> { action_name == 'show' && image? }
+  include UploadsActions
 
-  def create
-    link_to_file = ::Projects::UploadService.new(project, params[:file]).
-      execute
+  skip_before_action :project, :repository,
+    if: -> { action_name == 'show' && image_or_video? }
 
-    respond_to do |format|
-      if link_to_file
-        format.json do
-          render json: { link: link_to_file }
-        end
-      else
-        format.json do
-          render json: 'Invalid file.', status: :unprocessable_entity
-        end
-      end
-    end
-  end
+  before_action :authorize_upload_file!, only: [:create]
 
-  def show
-    return render_404 if uploader.nil? || !uploader.file.exists?
-
-    disposition = uploader.image? ? 'inline' : 'attachment'
-    send_file uploader.file.path, disposition: disposition
-  end
+  private
 
   def uploader
     return @uploader if defined?(@uploader)
@@ -32,7 +14,7 @@ class Projects::UploadsController < Projects::ApplicationController
     namespace = params[:namespace_id]
     id = params[:project_id]
 
-    file_project = Project.find_with_namespace("#{namespace}/#{id}")
+    file_project = Project.find_by_full_path("#{namespace}/#{id}")
 
     if file_project.nil?
       @uploader = nil
@@ -45,7 +27,13 @@ class Projects::UploadsController < Projects::ApplicationController
     @uploader
   end
 
-  def image?
-    uploader && uploader.file.exists? && uploader.image?
+  def image_or_video?
+    uploader && uploader.exists? && uploader.image_or_video?
   end
+
+  def uploader_class
+    FileUploader
+  end
+
+  alias_method :model, :project
 end

@@ -1,4 +1,6 @@
 class UpdateSnippetService < BaseService
+  include SpamCheckService
+
   attr_accessor :snippet
 
   def initialize(project, user, snippet, params)
@@ -17,6 +19,10 @@ class UpdateSnippetService < BaseService
       end
     end
 
-    snippet.update_attributes(params)
+    filter_spam_check_params
+    snippet.assign_attributes(params)
+    spam_check(snippet, current_user)
+
+    snippet.save
   end
 end

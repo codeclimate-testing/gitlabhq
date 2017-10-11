@@ -1,0 +1,76 @@
+{
+  "type": "object",
+  "required" : [
+    "iid",
+    "title",
+    "confidential"
+  ],
+  "properties" : {
+    "id": { "type": "integer" },
+    "iid": { "type": "integer" },
+    "project_id": { "type": ["integer", "null"] },
+    "title": { "type": "string" },
+    "confidential": { "type": "boolean" },
+    "due_date": { "type": ["date", "null"] },
+    "relative_position": { "type": "integer" },
+    "project": {
+      "id": { "type": "integer" },
+      "path": { "type": "string" }
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "color",
+          "description",
+          "title",
+          "priority"
+        ],
+        "properties": {
+          "id": { "type": "integer" },
+          "color": {
+            "type": "string",
+            "pattern": "^#[0-9A-Fa-f]{3}{1,2}+$"
+          },
+          "description": { "type": ["string", "null"] },
+          "text_color": {
+            "type": "string",
+            "pattern": "^#[0-9A-Fa-f]{3}{1,2}+$"
+          },
+          "type": { "type": "string" },
+          "title": { "type": "string" },
+          "priority": { "type": ["integer", "null"] }
+        },
+        "additionalProperties": false
+      }
+    },
+    "assignee": {
+      "id": { "type": "integet" },
+      "name": { "type": "string" },
+      "username": { "type": "string" },
+      "avatar_url": { "type": "uri" }
+    },
+    "assignees": {
+      "type": "array",
+      "items": {
+        "type": ["object", "null"],
+        "required": [
+          "id",
+          "name",
+          "username",
+          "avatar_url"
+        ],
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": "string" },
+          "username": { "type": "string" },
+          "avatar_url": { "type": "uri" }
+        }
+      }
+    },
+    "subscribed": { "type": ["boolean", "null"] }
+  },
+  "additionalProperties": false
+}

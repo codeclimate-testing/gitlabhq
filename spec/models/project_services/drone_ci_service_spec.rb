@@ -1,26 +1,8 @@
-# == Schema Information
-#
-# Table name: services
-#
-#  id                    :integer          not null, primary key
-#  type                  :string(255)
-#  title                 :string(255)
-#  project_id            :integer
-#  created_at            :datetime
-#  updated_at            :datetime
-#  active                :boolean          default(FALSE), not null
-#  properties            :text
-#  template              :boolean          default(FALSE)
-#  push_events           :boolean          default(TRUE)
-#  issues_events         :boolean          default(TRUE)
-#  merge_requests_events :boolean          default(TRUE)
-#  tag_push_events       :boolean          default(TRUE)
-#  note_events           :boolean          default(TRUE), not null
-#
-
 require 'spec_helper'
 
-describe DroneCiService do
+describe DroneCiService, :use_clean_rails_memory_store_caching do
+  include ReactiveCachingHelpers
+
   describe 'associations' do
     it { is_expected.to belong_to(:project) }
     it { is_expected.to have_one(:service_hook) }
@@ -28,39 +10,40 @@ describe DroneCiService do
 
   describe 'validations' do
     context 'active' do
-      before { allow(subject).to receive(:activated?).and_return(true) }
+      before do
+        subject.active = true
+      end
 
       it { is_expected.to validate_presence_of(:token) }
       it { is_expected.to validate_presence_of(:drone_url) }
-      it { is_expected.to allow_value('ewf9843kdnfdfs89234n').for(:token) }
-      it { is_expected.to allow_value('http://ci.example.com').for(:drone_url) }
-      it { is_expected.not_to allow_value('this is not url').for(:drone_url) }
-      it { is_expected.not_to allow_value('http//noturl').for(:drone_url) }
-      it { is_expected.not_to allow_value('ftp://ci.example.com').for(:drone_url) }
+      it_behaves_like 'issue tracker service URL attribute', :drone_url
     end
 
     context 'inactive' do
-      before { allow(subject).to receive(:activated?).and_return(false) }
+      before do
+        subject.active = false
+      end
 
       it { is_expected.not_to validate_presence_of(:token) }
       it { is_expected.not_to validate_presence_of(:drone_url) }
-      it { is_expected.to allow_value('ewf9843kdnfdfs89234n').for(:token) }
-      it { is_expected.to allow_value('http://drone.example.com').for(:drone_url) }
-      it { is_expected.to allow_value('ftp://drone.example.com').for(:drone_url) }
     end
   end
 
   shared_context :drone_ci_service do
     let(:drone)      { DroneCiService.new }
-    let(:project)    { create(:project, name: 'project') }
-    let(:path)       { "#{project.namespace.path}/#{project.path}" }
+    let(:project)    { create(:project, :repository, name: 'project') }
+    let(:path)       { project.full_path }
     let(:drone_url)  { 'http://drone.example.com' }
     let(:sha)        { '2ab7834c' }
     let(:branch)     { 'dev' }
     let(:token)      { 'secret' }
     let(:iid)        { rand(1..9999) }
 
-    before(:each) do
+    # URL's
+    let(:build_page) { "#{drone_url}/gitlab/#{path}/redirect/commits/#{sha}?branch=#{branch}" }
+    let(:commit_status_path) { "#{drone_url}/gitlab/#{path}/commits/#{sha}?branch=#{branch}&access_token=#{token}" }
+
+    before do
       allow(drone).to receive_messages(
         project_id: project.id,
         project: project,
@@ -69,29 +52,75 @@ describe DroneCiService do
         token: token
       )
     end
+
+    def stub_request(status: 200, body: nil)
+      body ||= %q({"status":"success"})
+
+      WebMock.stub_request(:get, commit_status_path).to_return(
+        status: status,
+        headers: { 'Content-Type' => 'application/json' },
+        body: body
+      )
+    end
   end
 
   describe "service page/path methods" do
     include_context :drone_ci_service
 
-    # URL's
-    let(:commit_page) { "#{drone_url}/gitlab/#{path}/redirect/commits/#{sha}?branch=#{branch}" }
-    let(:merge_request_page) { "#{drone_url}/gitlab/#{path}/redirect/pulls/#{iid}" }
-    let(:commit_status_path) { "#{drone_url}/gitlab/#{path}/commits/#{sha}?branch=#{branch}&access_token=#{token}" }
-    let(:merge_request_status_path) { "#{drone_url}/gitlab/#{path}/pulls/#{iid}?access_token=#{token}" }
-
-    it { expect(drone.build_page(sha, branch)).to eq(commit_page) }
-    it { expect(drone.commit_page(sha, branch)).to eq(commit_page) }
-    it { expect(drone.merge_request_page(iid, sha, branch)).to eq(merge_request_page) }
+    it { expect(drone.build_page(sha, branch)).to eq(build_page) }
     it { expect(drone.commit_status_path(sha, branch)).to eq(commit_status_path) }
-    it { expect(drone.merge_request_status_path(iid, sha, branch)).to eq(merge_request_status_path)  }
+  end
+
+  describe '#commit_status' do
+    include_context :drone_ci_service
+
+    it 'returns the contents of the reactive cache' do
+      stub_reactive_cache(drone, { commit_status: 'foo' }, 'sha', 'ref')
+
+      expect(drone.commit_status('sha', 'ref')).to eq('foo')
+    end
+  end
+
+  describe '#calculate_reactive_cache' do
+    include_context :drone_ci_service
+
+    context '#commit_status' do
+      subject { drone.calculate_reactive_cache(sha, branch)[:commit_status] }
+
+      it 'sets commit status to :error when status is 500' do
+        stub_request(status: 500)
+
+        is_expected.to eq(:error)
+      end
+
+      it 'sets commit status to :error when status is 404' do
+        stub_request(status: 404)
+
+        is_expected.to eq(:error)
+      end
+
+      {
+        "killed"  => :canceled,
+        "failure" => :failed,
+        "error"   => :failed,
+        "success" => "success"
+      }.each do |drone_status, our_status|
+        it "sets commit status to #{our_status.inspect} when returned status is #{drone_status.inspect}" do
+          stub_request(body: %Q({"status":"#{drone_status}"}))
+
+          is_expected.to eq(our_status)
+        end
+      end
+    end
   end
 
   describe "execute" do
     include_context :drone_ci_service
 
     let(:user)    { create(:user, username: 'username') }
-    let(:push_sample_data) { Gitlab::PushDataBuilder.build_sample(project, user) }
+    let(:push_sample_data) do
+      Gitlab::DataBuilder::Push.build_sample(project, user)
+    end
 
     it do
       service_hook = double

@@ -1,23 +1,3 @@
-# == Schema Information
-#
-# Table name: services
-#
-#  id                    :integer          not null, primary key
-#  type                  :string(255)
-#  title                 :string(255)
-#  project_id            :integer
-#  created_at            :datetime
-#  updated_at            :datetime
-#  active                :boolean          default(FALSE), not null
-#  properties            :text
-#  template              :boolean          default(FALSE)
-#  push_events           :boolean          default(TRUE)
-#  issues_events         :boolean          default(TRUE)
-#  merge_requests_events :boolean          default(TRUE)
-#  tag_push_events       :boolean          default(TRUE)
-#  note_events           :boolean          default(TRUE), not null
-#
-
 require "gemnasium/gitlab_service"
 
 class GemnasiumService < Service
@@ -32,18 +12,18 @@ class GemnasiumService < Service
     'Gemnasium monitors your project dependencies and alerts you about updates and security vulnerabilities.'
   end
 
-  def to_param
+  def self.to_param
     'gemnasium'
   end
 
   def fields
     [
-      { type: 'text', name: 'api_key', placeholder: 'Your personal API KEY on gemnasium.com ' },
-      { type: 'text', name: 'token', placeholder: 'The project\'s slug on gemnasium.com' }
+      { type: 'text', name: 'api_key', placeholder: 'Your personal API KEY on gemnasium.com ', required: true },
+      { type: 'text', name: 'token', placeholder: 'The project\'s slug on gemnasium.com', required: true }
     ]
   end
 
-  def supported_events
+  def self.supported_events
     %w(push)
   end
 
@@ -57,6 +37,6 @@ class GemnasiumService < Service
       token: token,
       api_key: api_key,
       repo: project.repository.path_to_repo
-      )
+    )
   end
 end

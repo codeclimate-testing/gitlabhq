@@ -1,41 +1,16 @@
-# == Schema Information
-#
-# Table name: services
-#
-#  id                    :integer          not null, primary key
-#  type                  :string(255)
-#  title                 :string(255)
-#  project_id            :integer
-#  created_at            :datetime
-#  updated_at            :datetime
-#  active                :boolean          default(FALSE), not null
-#  properties            :text
-#  template              :boolean          default(FALSE)
-#  push_events           :boolean          default(TRUE)
-#  issues_events         :boolean          default(TRUE)
-#  merge_requests_events :boolean          default(TRUE)
-#  tag_push_events       :boolean          default(TRUE)
-#  note_events           :boolean          default(TRUE), not null
-#
-
 class BambooService < CiService
-  include HTTParty
+  include ReactiveService
 
   prop_accessor :bamboo_url, :build_key, :username, :password
 
-  validates :bamboo_url,
-    presence: true,
-    format: { with: /\A#{URI.regexp}\z/ },
-    if: :activated?
+  validates :bamboo_url, presence: true, url: true, if: :activated?
   validates :build_key, presence: true, if: :activated?
   validates :username,
     presence: true,
-    if: ->(service) { service.password? },
-    if: :activated?
+    if: ->(service) { service.activated? && service.password }
   validates :password,
     presence: true,
-    if: ->(service) { service.username? },
-    if: :activated?
+    if: ->(service) { service.activated? && service.username }
 
   attr_accessor :response
 
@@ -65,62 +40,62 @@ class BambooService < CiService
     'You must set up automatic revision labeling and a repository trigger in Bamboo.'
   end
 
-  def to_param
+  def self.to_param
     'bamboo'
   end
 
   def fields
     [
         { type: 'text', name: 'bamboo_url',
-          placeholder: 'Bamboo root URL like https://bamboo.example.com' },
+          placeholder: 'Bamboo root URL like https://bamboo.example.com', required: true },
         { type: 'text', name: 'build_key',
-          placeholder: 'Bamboo build plan key like KEY' },
+          placeholder: 'Bamboo build plan key like KEY', required: true },
         { type: 'text', name: 'username',
           placeholder: 'A user with API access, if applicable' },
-        { type: 'password', name: 'password' },
+        { type: 'password', name: 'password' }
     ]
   end
 
-  def supported_events
-    %w(push)
-  end
-  
-  def build_info(sha)
-    url = URI.parse("#{bamboo_url}/rest/api/latest/result?label=#{sha}")
-
-    if username.blank? && password.blank?
-      @response = HTTParty.get(parsed_url.to_s, verify: false)
-    else
-      get_url = "#{url}&os_authType=basic"
-      auth = {
-          username: username,
-          password: password,
-      }
-      @response = HTTParty.get(get_url, verify: false, basic_auth: auth)
-    end
-  end
-
   def build_page(sha, ref)
-    build_info(sha) if @response.nil? || !@response.code
-
-    if @response.code != 200 || @response['results']['results']['size'] == '0'
-      # If actual build link can't be determined, send user to build summary page.
-      "#{bamboo_url}/browse/#{build_key}"
-    else
-      # If actual build link is available, go to build result page.
-      result_key = @response['results']['results']['result']['planResultKey']['key']
-      "#{bamboo_url}/browse/#{result_key}"
-    end
+    with_reactive_cache(sha, ref) {|cached| cached[:build_page] }
   end
 
   def commit_status(sha, ref)
-    build_info(sha) if @response.nil? || !@response.code
-    return :error unless @response.code == 200 || @response.code == 404
+    with_reactive_cache(sha, ref) {|cached| cached[:commit_status] }
+  end
 
-    status = if @response.code == 404 || @response['results']['results']['size'] == '0'
+  def execute(data)
+    return unless supported_events.include?(data[:object_kind])
+
+    get_path("updateAndBuild.action?buildKey=#{build_key}")
+  end
+
+  def calculate_reactive_cache(sha, ref)
+    response = get_path("rest/api/latest/result?label=#{sha}")
+
+    { build_page: read_build_page(response), commit_status: read_commit_status(response) }
+  end
+
+  private
+
+  def read_build_page(response)
+    if response.code != 200 || response['results']['results']['size'] == '0'
+      # If actual build link can't be determined, send user to build summary page.
+      URI.join("#{bamboo_url}/", "browse/#{build_key}").to_s
+    else
+      # If actual build link is available, go to build result page.
+      result_key = response['results']['results']['result']['planResultKey']['key']
+      URI.join("#{bamboo_url}/", "browse/#{result_key}").to_s
+    end
+  end
+
+  def read_commit_status(response)
+    return :error unless response.code == 200 || response.code == 404
+
+    status = if response.code == 404 || response['results']['results']['size'] == '0'
                'Pending'
              else
-               @response['results']['results']['result']['buildState']
+               response['results']['results']['result']['buildState']
              end
 
     if status.include?('Success')
@@ -134,11 +109,22 @@ class BambooService < CiService
     end
   end
 
-  def execute(data)
-    return unless supported_events.include?(data[:object_kind])
+  def build_url(path)
+    URI.join("#{bamboo_url}/", path).to_s
+  end
 
-    # Bamboo requires a GET and does not take any data.
-    self.class.get("#{bamboo_url}/updateAndBuild.action?buildKey=#{build_key}",
-                   verify: false)
+  def get_path(path)
+    url = build_url(path)
+
+    if username.blank? && password.blank?
+      HTTParty.get(url, verify: false)
+    else
+      url << '&os_authType=basic'
+      HTTParty.get(url, verify: false,
+                        basic_auth: {
+                          username: username,
+                          password: password
+                        })
+    end
   end
 end

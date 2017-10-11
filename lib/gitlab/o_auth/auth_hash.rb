@@ -13,7 +13,7 @@ module Gitlab
       end
 
       def provider
-        @provider ||= Gitlab::Utils.force_utf8(auth_hash.provider.to_s)
+        @provider ||= auth_hash.provider.to_s
       end
 
       def name
@@ -32,6 +32,23 @@ module Gitlab
         @password ||= Gitlab::Utils.force_utf8(Devise.friendly_token[0, 8].downcase)
       end
 
+      def location
+        location = get_info(:address)
+        if location.is_a?(Hash)
+          [location.locality.presence, location.country.presence].compact.join(', ')
+        else
+          location
+        end
+      end
+
+      def has_attribute?(attribute)
+        if attribute == :location
+          get_info(:address).present?
+        else
+          get_info(attribute).present?
+        end
+      end
+
       private
 
       def info
@@ -46,8 +63,8 @@ module Gitlab
 
       def username_and_email
         @username_and_email ||= begin
-          username  = get_info(:username) || get_info(:nickname)
-          email     = get_info(:email)
+          username  = get_info(:username).presence || get_info(:nickname).presence
+          email     = get_info(:email).presence
 
           username ||= generate_username(email)             if email
           email    ||= generate_temporarily_email(username) if username
@@ -62,7 +79,7 @@ module Gitlab
       # Get the first part of the email address (before @)
       # In addtion in removes illegal characters
       def generate_username(email)
-        email.match(/^[^@]*/)[0].parameterize
+        email.match(/^[^@]*/)[0].mb_chars.normalize(:kd).gsub(/[^\x00-\x7F]/, '').to_s
       end
 
       def generate_temporarily_email(username)

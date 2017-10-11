@@ -1,52 +1,22 @@
 class Projects::NotesController < Projects::ApplicationController
-  # Authorize
+  include NotesActions
+  include ToggleAwardEmoji
+
   before_action :authorize_read_note!
   before_action :authorize_create_note!, only: [:create]
-  before_action :authorize_admin_note!, only: [:update, :destroy]
-  before_action :find_current_user_notes, except: [:destroy, :delete_attachment]
+  before_action :authorize_resolve_note!, only: [:resolve, :unresolve]
 
-  def index
-    current_fetched_at = Time.now.to_i
-
-    notes_json = { notes: [], last_fetched_at: current_fetched_at }
-
-    @notes.each do |note|
-      notes_json[:notes] << {
-        id: note.id,
-        html: note_to_html(note)
-      }
-    end
-
-    render json: notes_json
-  end
-
+  #
+  # This is a fix to make spinach feature tests passing:
+  # Controller actions are returned from AbstractController::Base and methods of parent classes are
+  #   excluded in order to return only specific controller related methods.
+  # That is ok for the app (no :create method in ancestors)
+  #   but fails for tests because there is a :create method on FactoryGirl (one of the ancestors)
+  #
+  # see https://github.com/rails/rails/blob/v4.2.7/actionpack/lib/abstract_controller/base.rb#L78
+  #
   def create
-    @note = Notes::CreateService.new(project, current_user, note_params).execute
-
-    respond_to do |format|
-      format.json { render_note_json(@note) }
-      format.html { redirect_back_or_default }
-    end
-  end
-
-  def update
-    @note = Notes::UpdateService.new(project, current_user, note_params).execute(note)
-
-    respond_to do |format|
-      format.json { render_note_json(@note) }
-      format.html { redirect_back_or_default }
-    end
-  end
-
-  def destroy
-    if note.editable?
-      note.destroy
-      note.reset_events_cache
-    end
-
-    respond_to do |format|
-      format.js { render nothing: true }
-    end
+    super
   end
 
   def delete_attachment
@@ -54,8 +24,35 @@ class Projects::NotesController < Projects::ApplicationController
     note.update_attribute(:attachment, nil)
 
     respond_to do |format|
-      format.js { render nothing: true }
+      format.js { head :ok }
     end
+  end
+
+  def resolve
+    return render_404 unless note.resolvable?
+
+    note.resolve!(current_user)
+
+    MergeRequests::ResolvedDiscussionNotificationService.new(project, current_user).execute(note.noteable)
+
+    discussion = note.discussion
+
+    render json: {
+      resolved_by: note.resolved_by.try(:name),
+      discussion_headline_html: (view_to_html_string('discussions/_headline', discussion: discussion) if discussion)
+    }
+  end
+
+  def unresolve
+    return render_404 unless note.resolvable?
+
+    note.unresolve!
+
+    discussion = note.discussion
+
+    render json: {
+      discussion_headline_html: (view_to_html_string('discussions/_headline', discussion: discussion) if discussion)
+    }
   end
 
   private
@@ -63,73 +60,13 @@ class Projects::NotesController < Projects::ApplicationController
   def note
     @note ||= @project.notes.find(params[:id])
   end
+  alias_method :awardable, :note
 
-  def note_to_html(note)
-    render_to_string(
-      "projects/notes/_note",
-      layout: false,
-      formats: [:html],
-      locals: { note: note }
-    )
+  def finder_params
+    params.merge(last_fetched_at: last_fetched_at)
   end
 
-  def note_to_discussion_html(note)
-    if params[:view] == 'parallel'
-      template = "projects/notes/_diff_notes_with_reply_parallel"
-      locals =
-        if params[:line_type] == 'old'
-          { notes_left: [note], notes_right: [] }
-        else
-          { notes_left: [], notes_right: [note] }
-       end
-    else
-      template = "projects/notes/_diff_notes_with_reply"
-      locals = { notes: [note] }
-    end
-
-    render_to_string(
-      template,
-      layout: false,
-      formats: [:html],
-      locals: locals
-    )
-  end
-
-  def note_to_discussion_with_diff_html(note)
-    return unless note.for_diff_line?
-
-    render_to_string(
-      "projects/notes/_discussion",
-      layout: false,
-      formats: [:html],
-      locals: { discussion_notes: [note] }
-    )
-  end
-
-  def render_note_json(note)
-    render json: {
-      id: note.id,
-      discussion_id: note.discussion_id,
-      html: note_to_html(note),
-      discussion_html: note_to_discussion_html(note),
-      discussion_with_diff_html: note_to_discussion_with_diff_html(note)
-    }
-  end
-
-  def authorize_admin_note!
-    return access_denied! unless can?(current_user, :admin_note, note)
-  end
-
-  def note_params
-    params.require(:note).permit(
-      :note, :noteable, :noteable_id, :noteable_type, :project_id,
-      :attachment, :line_code, :commit_id
-    )
-  end
-
-  private
-
-  def find_current_user_notes
-    @notes = NotesFinder.new.execute(project, current_user, params)
+  def authorize_resolve_note!
+    return access_denied! unless can?(current_user, :resolve_note, note)
   end
 end

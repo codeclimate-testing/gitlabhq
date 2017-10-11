@@ -7,8 +7,14 @@ module InternalId
   end
 
   def set_iid
-    max_iid = project.send(self.class.name.tableize).maximum(:iid)
-    self.iid = max_iid.to_i + 1
+    if iid.blank?
+      parent = project || group
+      records = parent.public_send(self.class.name.tableize) # rubocop:disable GitlabSecurity/PublicSend
+      records = records.with_deleted if self.paranoid?
+      max_iid = records.maximum(:iid)
+
+      self.iid = max_iid.to_i + 1
+    end
   end
 
   def to_param

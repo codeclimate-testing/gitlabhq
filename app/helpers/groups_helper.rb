@@ -1,42 +1,142 @@
 module GroupsHelper
-  def remove_user_from_group_message(group, member)
-    if member.user
-      "Are you sure you want to remove \"#{member.user.name}\" from \"#{group.name}\"?"
-    else
-      "Are you sure you want to revoke the invitation for \"#{member.invite_email}\" to join \"#{group.name}\"?"
-    end
+  def can_change_group_visibility_level?(group)
+    can?(current_user, :change_visibility_level, group)
   end
 
-  def leave_group_message(group)
-    "Are you sure you want to leave \"#{group}\" group?"
-  end
-
-  def should_user_see_group_roles?(user, group)
-    if user
-      user.is_admin? || group.members.exists?(user_id: user.id)
-    else
-      false
-    end
+  def can_change_share_with_group_lock?(group)
+    can?(current_user, :change_share_with_group_lock, group)
   end
 
   def group_icon(group)
     if group.is_a?(String)
-      group = Group.find_by(path: group)
+      group = Group.find_by_full_path(group)
     end
 
-    if group && group.avatar.present?
-      group.avatar.url
-    else
-      'no_group_avatar.png'
-    end
+    group.try(:avatar_url) || ActionController::Base.helpers.image_path('no_group_avatar.png')
   end
 
   def group_title(group, name = nil, url = nil)
-    full_title = link_to(simple_sanitize(group.name), group_path(group))
-    full_title += ' &middot; '.html_safe + link_to(simple_sanitize(name), url) if name
+    @has_group_title = true
+    full_title = ''
 
-    content_tag :span do
-      full_title
+    group.ancestors.reverse.each_with_index do |parent, index|
+      if index > 0
+        add_to_breadcrumb_dropdown(group_title_link(parent, hidable: false, show_avatar: true, for_dropdown: true), location: :before)
+      else
+        full_title += breadcrumb_list_item group_title_link(parent, hidable: false)
+      end
     end
+
+    full_title += render "layouts/nav/breadcrumbs/collapsed_dropdown", location: :before, title: _("Show parent subgroups")
+
+    full_title += breadcrumb_list_item group_title_link(group)
+    full_title += ' &middot; '.html_safe + link_to(simple_sanitize(name), url, class: 'group-path breadcrumb-item-text js-breadcrumb-item-text') if name
+
+    full_title.html_safe
+  end
+
+  def projects_lfs_status(group)
+    lfs_status =
+      if group.lfs_enabled?
+        group.projects.select(&:lfs_enabled?).size
+      else
+        group.projects.reject(&:lfs_enabled?).size
+      end
+
+    size = group.projects.size
+
+    if lfs_status == size
+      'for all projects'
+    else
+      "for #{lfs_status} out of #{pluralize(size, 'project')}"
+    end
+  end
+
+  def group_lfs_status(group)
+    status = group.lfs_enabled? ? 'enabled' : 'disabled'
+
+    content_tag(:span, class: "lfs-#{status}") do
+      "#{status.humanize} #{projects_lfs_status(group)}"
+    end
+  end
+
+  def group_issues(group)
+    IssuesFinder.new(current_user, group_id: group.id).execute
+  end
+
+  def remove_group_message(group)
+    _("You are going to remove %{group_name}. Removed groups CANNOT be restored! Are you ABSOLUTELY sure?") %
+      { group_name: group.name }
+  end
+
+  def share_with_group_lock_help_text(group)
+    return default_help unless group.parent&.share_with_group_lock?
+
+    if group.share_with_group_lock?
+      if can?(current_user, :change_share_with_group_lock, group.parent)
+        ancestor_locked_but_you_can_override(group)
+      else
+        ancestor_locked_so_ask_the_owner(group)
+      end
+    else
+      ancestor_locked_and_has_been_overridden(group)
+    end
+  end
+
+  private
+
+  def group_title_link(group, hidable: false, show_avatar: false, for_dropdown: false)
+    link_to(group_path(group), class: "group-path #{'breadcrumb-item-text' unless for_dropdown} js-breadcrumb-item-text #{'hidable' if hidable}") do
+      output =
+        if (group.try(:avatar_url) || show_avatar) && !Rails.env.test?
+          image_tag(group_icon(group), class: "avatar-tile", width: 15, height: 15)
+        else
+          ""
+        end
+
+      output << simple_sanitize(group.name)
+      output.html_safe
+    end
+  end
+
+  def ancestor_group(group)
+    ancestor = oldest_consecutively_locked_ancestor(group)
+    if can?(current_user, :read_group, ancestor)
+      link_to ancestor.name, group_path(ancestor)
+    else
+      ancestor.name
+    end
+  end
+
+  def remove_the_share_with_group_lock_from_ancestor(group)
+    ancestor = oldest_consecutively_locked_ancestor(group)
+    text = s_("GroupSettings|remove the share with group lock from %{ancestor_group_name}") % { ancestor_group_name: ancestor.name }
+    if can?(current_user, :admin_group, ancestor)
+      link_to text, edit_group_path(ancestor)
+    else
+      text
+    end
+  end
+
+  def oldest_consecutively_locked_ancestor(group)
+    group.ancestors.find do |group|
+      !group.has_parent? || !group.parent.share_with_group_lock?
+    end
+  end
+
+  def default_help
+    s_("GroupSettings|This setting will be applied to all subgroups unless overridden by a group owner. Groups that already have access to the project will continue to have access unless removed manually.")
+  end
+
+  def ancestor_locked_but_you_can_override(group)
+    s_("GroupSettings|This setting is applied on %{ancestor_group}. You can override the setting or %{remove_ancestor_share_with_group_lock}.").html_safe % { ancestor_group: ancestor_group(group), remove_ancestor_share_with_group_lock: remove_the_share_with_group_lock_from_ancestor(group) }
+  end
+
+  def ancestor_locked_so_ask_the_owner(group)
+    s_("GroupSettings|This setting is applied on %{ancestor_group}. To share projects in this group with another group, ask the owner to override the setting or %{remove_ancestor_share_with_group_lock}.").html_safe % { ancestor_group: ancestor_group(group), remove_ancestor_share_with_group_lock: remove_the_share_with_group_lock_from_ancestor(group) }
+  end
+
+  def ancestor_locked_and_has_been_overridden(group)
+    s_("GroupSettings|This setting is applied on %{ancestor_group} and has been overridden on this subgroup.").html_safe % { ancestor_group: ancestor_group(group) }
   end
 end

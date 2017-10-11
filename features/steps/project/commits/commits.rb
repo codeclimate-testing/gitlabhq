@@ -13,7 +13,7 @@ class Spinach::Features::ProjectCommits < Spinach::FeatureSteps
   end
 
   step 'I click atom feed link' do
-    click_link "Commits Feed"
+    click_link "Commits feed"
   end
 
   step 'I see commits atom feed' do
@@ -21,11 +21,19 @@ class Spinach::Features::ProjectCommits < Spinach::FeatureSteps
     expect(response_headers['Content-Type']).to have_content("application/atom+xml")
     expect(body).to have_selector("title", text: "#{@project.name}:master commits")
     expect(body).to have_selector("author email", text: commit.author_email)
-    expect(body).to have_selector("entry summary", text: commit.description[0..10])
+    expect(body).to have_selector("entry summary", text: commit.description[0..10].delete("\r\n"))
+  end
+
+  step 'I click on tag link' do
+    click_link "Tag"
+  end
+
+  step 'I see commit SHA pre-filled' do
+    expect(page).to have_selector("input[value='#{sample_commit.id}']")
   end
 
   step 'I click on commit link' do
-    visit namespace_project_commit_path(@project.namespace, @project, sample_commit.id)
+    visit project_commit_path(@project, sample_commit.id)
   end
 
   step 'I see commit info' do
@@ -33,9 +41,17 @@ class Spinach::Features::ProjectCommits < Spinach::FeatureSteps
     expect(page).to have_content "Showing #{sample_commit.files_changed_count} changed files"
   end
 
+  step 'I fill compare fields with branches' do
+    select_using_dropdown('from', 'feature')
+    select_using_dropdown('to', 'master')
+
+    click_button 'Compare'
+  end
+
   step 'I fill compare fields with refs' do
-    fill_in "from", with: sample_commit.parent_id
-    fill_in "to",   with: sample_commit.id
+    select_using_dropdown('from', sample_commit.parent_id, true)
+    select_using_dropdown('to', sample_commit.id, true)
+
     click_button "Compare"
   end
 
@@ -56,6 +72,56 @@ class Spinach::Features::ProjectCommits < Spinach::FeatureSteps
     expect(page).to have_content "Showing 2 changed files"
   end
 
+  step 'I visit commits list page for feature branch' do
+    visit project_commits_path(@project, 'feature', { limit: 5 })
+  end
+
+  step 'I see feature branch commits' do
+    commit = @project.repository.commit('0b4bc9a')
+    expect(page).to have_content(@project.name)
+    expect(page).to have_content(commit.message[0..12])
+    expect(page).to have_content(commit.short_id)
+  end
+
+  step 'project have an open merge request' do
+    create(:merge_request,
+           title: 'Feature',
+           source_project: @project,
+           source_branch: 'feature',
+           target_branch: 'master',
+           author: @project.users.first
+          )
+  end
+
+  step 'I click the "Compare" tab' do
+    click_link('Compare')
+  end
+
+  step 'I fill compare fields with branches' do
+    select_using_dropdown('from', 'master')
+    select_using_dropdown('to', 'feature')
+
+    click_button 'Compare'
+  end
+
+  step 'I see compared branches' do
+    expect(page).to have_content 'Commits (1)'
+    expect(page).to have_content 'Showing 1 changed file with 5 additions and 0 deletions'
+  end
+
+  step 'I see button to create a new merge request' do
+    expect(page).to have_link 'Create merge request'
+  end
+
+  step 'I should not see button to create a new merge request' do
+    expect(page).not_to have_link 'Create merge request'
+  end
+
+  step 'I should see button to the merge request' do
+    merge_request = MergeRequest.find_by(title: 'Feature')
+    expect(page).to have_link "View open merge request", href: project_merge_request_path(@project, merge_request)
+  end
+
   step 'I see breadcrumb links' do
     expect(page).to have_selector('ul.breadcrumb')
     expect(page).to have_selector('ul.breadcrumb a', count: 4)
@@ -68,28 +134,12 @@ class Spinach::Features::ProjectCommits < Spinach::FeatureSteps
     expect(page).to have_content 'Authors'
   end
 
-  step 'I visit big commit page' do
-    stub_const('Commit::DIFF_SAFE_FILES', 20)
-    visit namespace_project_commit_path(@project.namespace, @project, sample_big_commit.id)
-  end
-
-  step 'I see big commit warning' do
-    expect(page).to have_content sample_big_commit.message
-    expect(page).to have_content "Too many changes"
-  end
-
-  step 'I see "Reload with full diff" link' do
-    link = find_link('Reload with full diff')
-    expect(link[:href]).to end_with('?force_show_diff=true')
-    expect(link[:href]).not_to include('.html')
-  end
-
   step 'I visit a commit with an image that changed' do
-    visit namespace_project_commit_path(@project.namespace, @project, sample_image_commit.id)
+    visit project_commit_path(@project, sample_image_commit.id)
   end
 
   step 'The diff links to both the previous and current image' do
-    links = page.all('.two-up span div a')
+    links = page.all('.file-actions a')
     expect(links[0]['href']).to match %r{blob/#{sample_image_commit.old_blob_id}}
     expect(links[1]['href']).to match %r{blob/#{sample_image_commit.new_blob_id}}
   end
@@ -104,20 +154,37 @@ class Spinach::Features::ProjectCommits < Spinach::FeatureSteps
 
   step 'commit has ci status' do
     @project.enable_ci
-    ci_commit = create :ci_commit, gl_project: @project, sha: sample_commit.id
-    create :ci_build, commit: ci_commit
+    pipeline = create :ci_pipeline, project: @project, sha: sample_commit.id
+    create :ci_build, pipeline: pipeline
+  end
+
+  step 'repository contains ".gitlab-ci.yml" file' do
+    allow_any_instance_of(Ci::Pipeline).to receive(:ci_yaml_file).and_return(String.new)
   end
 
   step 'I see commit ci info' do
-    expect(page).to have_content "build: pending"
+    expect(page).to have_content "Pipeline #1 pending"
   end
 
-  step 'I click status link' do
-    find('.commit-ci-menu').click_link "Builds"
+  step 'I search "submodules" commits' do
+    fill_in 'commits-search', with: 'submodules'
   end
 
-  step 'I see builds list' do
-    expect(page).to have_content "build: pending"
-    expect(page).to have_content "Latest builds"
+  step 'I should see only "submodules" commits' do
+    expect(page).to have_content "More submodules"
+    expect(page).not_to have_content "Change some files"
+  end
+
+  def select_using_dropdown(dropdown_type, selection, is_commit = false)
+    dropdown = find(".js-compare-#{dropdown_type}-dropdown")
+    dropdown.find(".compare-dropdown-toggle").click
+    dropdown.find('.dropdown-menu', visible: true)
+    dropdown.fill_in("Filter by Git revision", with: selection)
+    if is_commit
+      dropdown.find('input[type="search"]').send_keys(:return)
+    else
+      find_link(selection, visible: true).click
+    end
+    dropdown.find('.dropdown-menu', visible: false)
   end
 end

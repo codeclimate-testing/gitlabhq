@@ -1,6 +1,11 @@
+require './spec/support/sidekiq'
+
 Gitlab::Seeder.quiet do
+  # Limit the number of merge requests per project to avoid long seeds
+  MAX_NUM_MERGE_REQUESTS = 10
+
   Project.all.reject(&:empty_repo?).each do |project|
-    branches = project.repository.branch_names
+    branches = project.repository.branch_names.sample(MAX_NUM_MERGE_REQUESTS * 2)
 
     branches.each do |branch_name|
       break if branches.size < 2
@@ -21,7 +26,9 @@ Gitlab::Seeder.quiet do
     end
   end
 
-  project = Project.find_with_namespace('gitlab-org/gitlab-test')
+  project = Project.find_by_full_path('gitlab-org/gitlab-test')
+
+  next if project.empty_repo? # We don't have repository on CI
 
   params = {
     source_branch: 'feature',

@@ -1,81 +1,110 @@
 require 'spec_helper'
 
-describe API::API, api: true  do
-  include ApiHelpers
-
+describe API::SystemHooks do
   let(:user) { create(:user) }
   let(:admin) { create(:admin) }
   let!(:hook) { create(:system_hook, url: "http://example.com") }
 
-  before { stub_request(:post, hook.url) }
+  before do
+    stub_request(:post, hook.url)
+  end
 
   describe "GET /hooks" do
     context "when no user" do
-      it "should return authentication error" do
+      it "returns authentication error" do
         get api("/hooks")
-        expect(response.status).to eq(401)
+
+        expect(response).to have_http_status(401)
       end
     end
 
     context "when not an admin" do
-      it "should return forbidden error" do
+      it "returns forbidden error" do
         get api("/hooks", user)
-        expect(response.status).to eq(403)
+
+        expect(response).to have_http_status(403)
       end
     end
 
     context "when authenticated as admin" do
-      it "should return an array of hooks" do
+      it "returns an array of hooks" do
         get api("/hooks", admin)
-        expect(response.status).to eq(200)
+
+        expect(response).to have_http_status(200)
+        expect(response).to include_pagination_headers
         expect(json_response).to be_an Array
         expect(json_response.first['url']).to eq(hook.url)
+        expect(json_response.first['push_events']).to be false
+        expect(json_response.first['tag_push_events']).to be false
+        expect(json_response.first['repository_update_events']).to be true
       end
     end
   end
 
   describe "POST /hooks" do
-    it "should create new hook" do
+    it "creates new hook" do
       expect do
         post api("/hooks", admin), url: 'http://example.com'
       end.to change { SystemHook.count }.by(1)
     end
 
-    it "should respond with 400 if url not given" do
+    it "responds with 400 if url not given" do
       post api("/hooks", admin)
-      expect(response.status).to eq(400)
+
+      expect(response).to have_http_status(400)
     end
 
-    it "should not create new hook without url" do
+    it "responds with 400 if url is invalid" do
+      post api("/hooks", admin), url: 'hp://mep.mep'
+
+      expect(response).to have_http_status(400)
+    end
+
+    it "does not create new hook without url" do
       expect do
         post api("/hooks", admin)
-      end.to_not change { SystemHook.count }
+      end.not_to change { SystemHook.count }
+    end
+
+    it 'sets default values for events' do
+      post api('/hooks', admin), url: 'http://mep.mep', enable_ssl_verification: true
+
+      expect(response).to have_http_status(201)
+      expect(json_response['enable_ssl_verification']).to be true
+      expect(json_response['tag_push_events']).to be false
     end
   end
 
   describe "GET /hooks/:id" do
-    it "should return hook by id" do
+    it "returns hook by id" do
       get api("/hooks/#{hook.id}", admin)
-      expect(response.status).to eq(200)
+      expect(response).to have_http_status(200)
       expect(json_response['event_name']).to eq('project_create')
     end
 
-    it "should return 404 on failure" do
+    it "returns 404 on failure" do
       get api("/hooks/404", admin)
-      expect(response.status).to eq(404)
+      expect(response).to have_http_status(404)
     end
   end
 
   describe "DELETE /hooks/:id" do
-    it "should delete a hook" do
+    it "deletes a hook" do
       expect do
         delete api("/hooks/#{hook.id}", admin)
+
+        expect(response).to have_http_status(204)
       end.to change { SystemHook.count }.by(-1)
     end
 
-    it "should return success if hook id not found" do
-      delete api("/hooks/12345", admin)
-      expect(response.status).to eq(200)
+    it 'returns 404 if the system hook does not exist' do
+      delete api('/hooks/12345', admin)
+
+      expect(response).to have_http_status(404)
+    end
+
+    it_behaves_like '412 response' do
+      let(:request) { api("/hooks/#{hook.id}", admin) }
     end
   end
 end

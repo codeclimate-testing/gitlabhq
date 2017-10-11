@@ -1,13 +1,12 @@
 - page_title "Snippets"
-= render "header_title"
 
-.gray-content-block.top-block
-  .pull-right
-    = link_to new_namespace_project_snippet_path(@project.namespace, @project), class: "btn btn-new", title: "New Snippet" do
-      = icon('plus')
-      New Snippet
+- if current_user
+  .top-area
+    - include_private = @project.team.member?(current_user) || current_user.admin?
+    = render partial: 'snippets/snippets_scope_menu', locals: { subject: @project, include_private: include_private }
 
-  .oneline
-    Share code pastes with others out of git repository
+    .nav-controls
+      - if can?(current_user, :create_project_snippet, @project)
+        = link_to "New snippet", new_project_snippet_path(@project), class: "btn btn-new", title: "New snippet"
 
 = render 'snippets/snippets'

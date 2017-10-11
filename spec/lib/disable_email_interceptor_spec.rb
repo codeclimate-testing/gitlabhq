@@ -2,10 +2,10 @@ require 'spec_helper'
 
 describe DisableEmailInterceptor do
   before do
-    ActionMailer::Base.register_interceptor(DisableEmailInterceptor)
+    Mail.register_interceptor(described_class)
   end
 
-  it 'should not send emails' do
+  it 'does not send emails' do
     allow(Gitlab.config.gitlab).to receive(:email_enabled).and_return(false)
     expect { deliver_mail }.not_to change(ActionMailer::Base.deliveries, :count)
   end
@@ -14,7 +14,7 @@ describe DisableEmailInterceptor do
     # Removing interceptor from the list because unregister_interceptor is
     # implemented in later version of mail gem
     # See: https://github.com/mikel/mail/pull/705
-    Mail.class_variable_set(:@@delivery_interceptors, [])
+    Mail.unregister_interceptor(described_class)
   end
 
   def deliver_mail

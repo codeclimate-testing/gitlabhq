@@ -1,59 +1,62 @@
 class PostReceive
   include Sidekiq::Worker
-  include Gitlab::Identifier
+  include DedicatedSidekiqQueue
 
-  sidekiq_options queue: :post_receive
-
-  def perform(repo_path, identifier, changes)
-    if repo_path.start_with?(Gitlab.config.gitlab_shell.repos_path.to_s)
-      repo_path.gsub!(Gitlab.config.gitlab_shell.repos_path.to_s, "")
-    else
-      log("Check gitlab.yml config for correct gitlab_shell.repos_path variable. \"#{Gitlab.config.gitlab_shell.repos_path}\" does not match \"#{repo_path}\"")
-    end
-
-    repo_path.gsub!(/\.git\z/, "")
-    repo_path.gsub!(/\A\//, "")
-
-    project = Project.find_with_namespace(repo_path)
+  def perform(gl_repository, identifier, changes)
+    project, is_wiki = Gitlab::GlRepository.parse(gl_repository)
 
     if project.nil?
-      log("Triggered hook for non-existing project with full path \"#{repo_path} \"")
+      log("Triggered hook for non-existing project with gl_repository \"#{gl_repository}\"")
       return false
     end
 
-    changes = Base64.decode64(changes) unless changes.include?(" ")
-    changes = utf8_encode_changes(changes)
-    changes = changes.lines
+    changes = Base64.decode64(changes) unless changes.include?(' ')
+    # Use Sidekiq.logger so arguments can be correlated with execution
+    # time and thread ID's.
+    Sidekiq.logger.info "changes: #{changes.inspect}" if ENV['SIDEKIQ_LOG_ARGUMENTS']
+    post_received = Gitlab::GitPostReceive.new(project, identifier, changes)
 
-    changes.each do |change|
-      oldrev, newrev, ref = change.strip.split(' ')
+    if is_wiki
+      process_wiki_changes(post_received)
+    else
+      process_project_changes(post_received)
+    end
+  end
 
-      @user ||= identify(identifier, project, newrev)
+  private
+
+  def process_project_changes(post_received)
+    changes = []
+    refs = Set.new
+
+    post_received.changes_refs do |oldrev, newrev, ref|
+      @user ||= post_received.identify(newrev)
 
       unless @user
-        log("Triggered hook for non-existing user \"#{identifier} \"")
+        log("Triggered hook for non-existing user \"#{post_received.identifier}\"")
         return false
       end
 
       if Gitlab::Git.tag_ref?(ref)
-        GitTagPushService.new.execute(project, @user, oldrev, newrev, ref)
-      else
-        GitPushService.new.execute(project, @user, oldrev, newrev, ref)
+        GitTagPushService.new(post_received.project, @user, oldrev: oldrev, newrev: newrev, ref: ref).execute
+      elsif Gitlab::Git.branch_ref?(ref)
+        GitPushService.new(post_received.project, @user, oldrev: oldrev, newrev: newrev, ref: ref).execute
       end
+
+      changes << Gitlab::DataBuilder::Repository.single_change(oldrev, newrev, ref)
+      refs << ref
     end
+
+    after_project_changes_hooks(post_received, @user, refs.to_a, changes)
   end
 
-  def utf8_encode_changes(changes)
-    changes = changes.dup
+  def after_project_changes_hooks(post_received, user, refs, changes)
+    hook_data = Gitlab::DataBuilder::Repository.update(post_received.project, user, changes, refs)
+    SystemHooksService.new.execute_hooks(hook_data, :repository_update_hooks)
+  end
 
-    changes.force_encoding("UTF-8")
-    return changes if changes.valid_encoding?
-
-    # Convert non-UTF-8 branch/tag names to UTF-8 so they can be dumped as JSON.
-    detection = CharlockHolmes::EncodingDetector.detect(changes)
-    return changes unless detection && detection[:encoding]
-
-    CharlockHolmes::Converter.convert(changes, detection[:encoding], 'UTF-8')
+  def process_wiki_changes(post_received)
+    # Nothing defined here yet.
   end
 
   def log(message)

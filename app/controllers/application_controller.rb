@@ -3,25 +3,34 @@ require 'fogbugz'
 
 class ApplicationController < ActionController::Base
   include Gitlab::CurrentSettings
+  include Gitlab::GonHelper
   include GitlabRoutingHelper
   include PageLayoutHelper
+  include SentryHelper
+  include WorkhorseHelper
+  include EnforcesTwoFactorAuthentication
+  include WithPerformanceBar
 
-  PER_PAGE = 20
-
-  before_action :authenticate_user_from_token!
+  before_action :authenticate_user_from_private_token!
+  before_action :authenticate_user_from_rss_token!
   before_action :authenticate_user!
-  before_action :reject_blocked!
+  before_action :validate_user_service_ticket!
   before_action :check_password_expiration
   before_action :ldap_security_check
+  before_action :sentry_context
   before_action :default_headers
-  before_action :add_gon_variables
+  before_action :add_gon_variables, unless: -> { request.path.start_with?('/-/peek') }
   before_action :configure_permitted_parameters, if: :devise_controller?
   before_action :require_email, unless: :devise_controller?
 
+  around_action :set_locale
+
+  after_action :set_page_title_header, if: -> { request.format == :json }
+
   protect_from_forgery with: :exception
 
-  helper_method :abilities, :can?, :current_application_settings
-  helper_method :import_sources_enabled?, :github_import_enabled?, :github_import_configured?, :gitlab_import_enabled?, :gitlab_import_configured?, :bitbucket_import_enabled?, :bitbucket_import_configured?, :gitorious_import_enabled?, :google_code_import_enabled?, :fogbugz_import_enabled?, :git_import_enabled?
+  helper_method :can?, :current_application_settings
+  helper_method :import_sources_enabled?, :github_import_enabled?, :gitea_import_enabled?, :github_import_configured?, :gitlab_import_enabled?, :gitlab_import_configured?, :bitbucket_import_enabled?, :bitbucket_import_configured?, :google_code_import_enabled?, :fogbugz_import_enabled?, :git_import_enabled?, :gitlab_project_import_enabled?
 
   rescue_from Encoding::CompatibilityError do |exception|
     log_exception(exception)
@@ -33,130 +42,117 @@ class ApplicationController < ActionController::Base
     render_404
   end
 
+  rescue_from(ActionController::UnknownFormat) do
+    render_404
+  end
+
+  rescue_from Gitlab::Access::AccessDeniedError do |exception|
+    render_403
+  end
+
+  rescue_from Gitlab::Auth::TooManyIps do |e|
+    head :forbidden, retry_after: Gitlab::Auth::UniqueIpsLimiter.config.unique_ips_limit_time_window
+  end
+
+  rescue_from Gitlab::Git::Storage::Inaccessible, GRPC::Unavailable, Gitlab::Git::CommandError do |exception|
+    Raven.capture_exception(exception) if sentry_enabled?
+    log_exception(exception)
+
+    headers['Retry-After'] = exception.retry_after if exception.respond_to?(:retry_after)
+
+    render_503
+  end
+
   def redirect_back_or_default(default: root_path, options: {})
     redirect_to request.referer.present? ? :back : default, options
   end
 
-  protected
+  def not_found
+    render_404
+  end
 
-  # From https://github.com/plataformatec/devise/wiki/How-To:-Simple-Token-Authentication-Example
-  # https://gist.github.com/josevalim/fb706b1e933ef01e4fb6
-  def authenticate_user_from_token!
-    user_token = if params[:authenticity_token].presence
-                   params[:authenticity_token].presence
-                 elsif params[:private_token].presence
-                   params[:private_token].presence
-                 end
-    user = user_token && User.find_by_authentication_token(user_token.to_s)
-
-    if user
-      # Notice we are passing store false, so the user is not
-      # actually stored in the session and a token is needed
-      # for every request. If you want the token to work as a
-      # sign in token, you can simply remove store: false.
-      sign_in user, store: false
+  def route_not_found
+    if current_user
+      not_found
+    else
+      authenticate_user!
     end
   end
 
-  def authenticate_user!(*args)
-    if redirect_to_home_page_url?
-      redirect_to current_application_settings.home_page_url and return
-    end
+  protected
 
-    super(*args)
+  def append_info_to_payload(payload)
+    super
+    payload[:remote_ip] = request.remote_ip
+
+    logged_user = auth_user
+
+    if logged_user.present?
+      payload[:user_id] = logged_user.try(:id)
+      payload[:username] = logged_user.try(:username)
+    end
+  end
+
+  # Controllers such as GitHttpController may use alternative methods
+  # (e.g. tokens) to authenticate the user, whereas Devise sets current_user
+  def auth_user
+    return current_user if current_user.present?
+    return try(:authenticated_user)
+  end
+
+  # This filter handles both private tokens and personal access tokens
+  def authenticate_user_from_private_token!
+    token = params[:private_token].presence || request.headers['PRIVATE-TOKEN'].presence
+
+    return unless token.present?
+
+    user = User.find_by_authentication_token(token) || User.find_by_personal_access_token(token)
+
+    sessionless_sign_in(user)
+  end
+
+  # This filter handles authentication for atom request with an rss_token
+  def authenticate_user_from_rss_token!
+    return unless request.format.atom?
+
+    token = params[:rss_token].presence
+
+    return unless token.present?
+
+    user = User.find_by_rss_token(token)
+
+    sessionless_sign_in(user)
   end
 
   def log_exception(exception)
+    Raven.capture_exception(exception) if sentry_enabled?
+
     application_trace = ActionDispatch::ExceptionWrapper.new(env, exception).application_trace
-    application_trace.map!{ |t| "  #{t}\n" }
+    application_trace.map! { |t| "  #{t}\n" }
     logger.error "\n#{exception.class.name} (#{exception.message}):\n#{application_trace.join}"
   end
 
-  def reject_blocked!
-    if current_user && current_user.blocked?
-      sign_out current_user
-      flash[:alert] = "Your account is blocked. Retry when an admin has unblocked it."
-      redirect_to new_user_session_path
-    end
-  end
-
   def after_sign_in_path_for(resource)
-    if resource.is_a?(User) && resource.respond_to?(:blocked?) && resource.blocked?
-      sign_out resource
-      flash[:alert] = "Your account is blocked. Retry when an admin has unblocked it."
-      new_user_session_path
-    else
-      stored_location_for(:redirect) || stored_location_for(resource) || root_path
-    end
+    stored_location_for(:redirect) || stored_location_for(resource) || root_path
   end
 
   def after_sign_out_path_for(resource)
-    current_application_settings.after_sign_out_path || new_user_session_path
+    current_application_settings.after_sign_out_path.presence || new_user_session_path
   end
 
-  def abilities
-    Ability.abilities
-  end
-
-  def can?(object, action, subject)
-    abilities.allowed?(object, action, subject)
-  end
-
-  def project
-    unless @project
-      namespace = params[:namespace_id]
-      id = params[:project_id] || params[:id]
-
-      # Redirect from
-      #   localhost/group/project.git
-      # to
-      #   localhost/group/project
-      #
-      if id =~ /\.git\Z/
-        redirect_to request.original_url.gsub(/\.git\Z/, '') and return
-      end
-
-      project_path = "#{namespace}/#{id}"
-      @project = Project.find_with_namespace(project_path)
-
-      if @project and can?(current_user, :read_project, @project)
-        if @project.path_with_namespace != project_path
-          redirect_to request.original_url.gsub(project_path, @project.path_with_namespace) and return
-        end
-        @project
-      elsif current_user.nil?
-        @project = nil
-        authenticate_user!
-      else
-        @project = nil
-        render_404 and return
-      end
-    end
-    @project
-  end
-
-  def repository
-    @repository ||= project.repository
-  end
-
-  def authorize_project!(action)
-    return access_denied! unless can?(current_user, action, project)
+  def can?(object, action, subject = :global)
+    Ability.allowed?(object, action, subject)
   end
 
   def access_denied!
-    render "errors/access_denied", layout: "errors", status: 404
+    respond_to do |format|
+      format.json { head :not_found }
+      format.any { render "errors/access_denied", layout: "errors", status: 404 }
+    end
   end
 
   def git_not_found!
-    render html: "errors/git_not_found", layout: "errors", status: 404
-  end
-
-  def method_missing(method_sym, *arguments, &block)
-    if method_sym.to_s =~ /\Aauthorize_(.*)!\z/
-      authorize_project!($1.to_sym)
-    else
-      super
-    end
+    render "errors/git_not_found.html", layout: "errors", status: 404
   end
 
   def render_403
@@ -164,11 +160,29 @@ class ApplicationController < ActionController::Base
   end
 
   def render_404
-    render file: Rails.root.join("public", "404"), layout: false, status: "404"
+    respond_to do |format|
+      format.html do
+        render file: Rails.root.join("public", "404"), layout: false, status: "404"
+      end
+      format.any { head :not_found }
+    end
   end
 
-  def require_non_empty_project
-    redirect_to @project if @project.empty_repo?
+  def respond_422
+    head :unprocessable_entity
+  end
+
+  def render_503
+    respond_to do |format|
+      format.html do
+        render(
+          file: Rails.root.join("public", "503"),
+          layout: false,
+          status: :service_unavailable
+        )
+      end
+      format.any { head :service_unavailable }
+    end
   end
 
   def no_cache_headers
@@ -182,34 +196,32 @@ class ApplicationController < ActionController::Base
     headers['X-XSS-Protection'] = '1; mode=block'
     headers['X-UA-Compatible'] = 'IE=edge'
     headers['X-Content-Type-Options'] = 'nosniff'
-    # Enabling HSTS for non-standard ports would send clients to the wrong port
-    if Gitlab.config.gitlab.https and Gitlab.config.gitlab.port == 443
-      headers['Strict-Transport-Security'] = 'max-age=31536000'
-    end
   end
 
-  def add_gon_variables
-    gon.api_version            = API::API.version
-    gon.default_avatar_url     = URI::join(Gitlab.config.gitlab.url, ActionController::Base.helpers.image_path('no_avatar.png')).to_s
-    gon.default_issues_tracker = Project.new.default_issue_tracker.to_param
-    gon.max_file_size          = current_application_settings.max_attachment_size
-    gon.relative_url_root      = Gitlab.config.gitlab.relative_url_root
-    gon.user_color_scheme      = Gitlab::ColorSchemes.for_user(current_user).css_class
+  def validate_user_service_ticket!
+    return unless signed_in? && session[:service_tickets]
 
-    if current_user
-      gon.current_user_id = current_user.id
-      gon.api_token = current_user.private_token
+    valid = session[:service_tickets].all? do |provider, ticket|
+      Gitlab::OAuth::Session.valid?(provider, ticket)
+    end
+
+    unless valid
+      session[:service_tickets] = nil
+      sign_out current_user
+      redirect_to new_user_session_path
     end
   end
 
   def check_password_expiration
-    if current_user && current_user.password_expires_at && current_user.password_expires_at < Time.now  && !current_user.ldap_user?
-      redirect_to new_profile_password_path and return
+    if current_user && current_user.password_expires_at && current_user.password_expires_at < Time.now && !current_user.ldap_user?
+      return redirect_to new_profile_password_path
     end
   end
 
   def ldap_security_check
     if current_user && current_user.requires_ldap_check?
+      return unless current_user.try_obtain_ldap_lease
+
       unless Gitlab::LDAP::Access.allowed?(current_user)
         sign_out current_user
         flash[:alert] = "Access denied for your LDAP account."
@@ -219,18 +231,20 @@ class ApplicationController < ActionController::Base
   end
 
   def event_filter
-    filters = cookies['event_filter'].split(',') if cookies['event_filter'].present?
+    # Split using comma to maintain backward compatibility Ex/ "filter1,filter2"
+    filters = cookies['event_filter'].split(',')[0] if cookies['event_filter'].present?
     @event_filter ||= EventFilter.new(filters)
   end
 
   def gitlab_ldap_access(&block)
-    Gitlab::LDAP::Access.open { |access| block.call(access) }
+    Gitlab::LDAP::Access.open { |access| yield(access) }
   end
 
   # JSON for infinite scroll via Pager object
-  def pager_json(partial, count)
+  def pager_json(partial, count, locals = {})
     html = render_to_string(
       partial,
+      locals: locals,
       layout: false,
       formats: [:html]
     )
@@ -241,16 +255,17 @@ class ApplicationController < ActionController::Base
     }
   end
 
-  def view_to_html_string(partial)
+  def view_to_html_string(partial, locals = {})
     render_to_string(
       partial,
+      locals: locals,
       layout: false,
       formats: [:html]
     )
   end
 
   def configure_permitted_parameters
-    devise_parameter_sanitizer.for(:sign_in) { |u| u.permit(:username, :email, :password, :login, :remember_me, :otp_attempt) }
+    devise_parameter_sanitizer.permit(:sign_in, keys: [:username, :email, :password, :login, :remember_me, :otp_attempt])
   end
 
   def hexdigest(string)
@@ -258,44 +273,9 @@ class ApplicationController < ActionController::Base
   end
 
   def require_email
-    if current_user && current_user.temp_oauth_email?
-      redirect_to profile_path, notice: 'Please complete your profile with email address' and return
+    if current_user && current_user.temp_oauth_email? && session[:impersonator_id].nil?
+      return redirect_to profile_path, notice: 'Please complete your profile with email address'
     end
-  end
-
-  def set_filters_params
-    params[:sort] ||= 'created_desc'
-    params[:scope] = 'all' if params[:scope].blank?
-    params[:state] = 'opened' if params[:state].blank?
-
-    @sort = params[:sort]
-    @filter_params = params.dup
-
-    if @project
-      @filter_params[:project_id] = @project.id
-    elsif @group
-      @filter_params[:group_id] = @group.id
-    else
-      # TODO: this filter ignore issues/mr created in public or
-      # internal repos where you are not a member. Enable this filter
-      # or improve current implementation to filter only issues you
-      # created or assigned or mentioned
-      #@filter_params[:authorized_only] = true
-    end
-
-    @filter_params
-  end
-
-  def get_issues_collection
-    set_filters_params
-    @issuable_finder = IssuesFinder.new(current_user, @filter_params)
-    @issuable_finder.execute
-  end
-
-  def get_merge_requests_collection
-    set_filters_params
-    @issuable_finder = MergeRequestsFinder.new(current_user, @filter_params)
-    @issuable_finder.execute
   end
 
   def import_sources_enabled?
@@ -304,6 +284,10 @@ class ApplicationController < ActionController::Base
 
   def github_import_enabled?
     current_application_settings.import_sources.include?('github')
+  end
+
+  def gitea_import_enabled?
+    current_application_settings.import_sources.include?('gitea')
   end
 
   def github_import_configured?
@@ -323,11 +307,7 @@ class ApplicationController < ActionController::Base
   end
 
   def bitbucket_import_configured?
-    Gitlab::OAuth::Provider.enabled?(:bitbucket) && Gitlab::BitbucketImport.public_key.present?
-  end
-
-  def gitorious_import_enabled?
-    current_application_settings.import_sources.include?('gitorious')
+    Gitlab::OAuth::Provider.enabled?(:bitbucket)
   end
 
   def google_code_import_enabled?
@@ -342,16 +322,33 @@ class ApplicationController < ActionController::Base
     current_application_settings.import_sources.include?('git')
   end
 
-  def redirect_to_home_page_url?
-    # If user is not signed-in and tries to access root_path - redirect him to landing page
-    # Don't redirect to the default URL to prevent endless redirections
-    return false unless current_application_settings.home_page_url.present?
+  def gitlab_project_import_enabled?
+    current_application_settings.import_sources.include?('gitlab_project')
+  end
 
-    home_page_url = current_application_settings.home_page_url.chomp('/')
-    root_urls = [Gitlab.config.gitlab['url'].chomp('/'), root_url.chomp('/')]
+  # U2F (universal 2nd factor) devices need a unique identifier for the application
+  # to perform authentication.
+  # https://developers.yubico.com/U2F/App_ID.html
+  def u2f_app_id
+    request.base_url
+  end
 
-    return false if root_urls.include?(home_page_url)
+  def set_locale(&block)
+    Gitlab::I18n.with_user_locale(current_user, &block)
+  end
 
-    current_user.nil? && root_path == request.path
+  def sessionless_sign_in(user)
+    if user && can?(user, :log_in)
+      # Notice we are passing store false, so the user is not
+      # actually stored in the session and a token is needed
+      # for every request. If you want the token to work as a
+      # sign in token, you can simply remove store: false.
+      sign_in user, store: false
+    end
+  end
+
+  def set_page_title_header
+    # Per https://tools.ietf.org/html/rfc5987, headers need to be ISO-8859-1, not UTF-8
+    response.headers['Page-Title'] = page_title('GitLab').encode('ISO-8859-1')
   end
 end

@@ -1,9 +1,23 @@
 module EventsHelper
-  def link_to_author(event)
+  ICON_NAMES_BY_EVENT_TYPE = {
+    'pushed to' => 'commit',
+    'pushed new' => 'commit',
+    'created' => 'status_open',
+    'opened' => 'status_open',
+    'closed' => 'status_closed',
+    'accepted' => 'fork',
+    'commented on' => 'comment',
+    'deleted' => 'remove',
+    'imported' => 'import',
+    'joined' => 'users'
+  }.freeze
+
+  def link_to_author(event, self_added: false)
     author = event.author
 
     if author
-      link_to author.name, user_path(author.username)
+      name = self_added ? 'You' : author.name
+      link_to name, user_path(author.username), title: name
     else
       event.author_name
     end
@@ -23,27 +37,32 @@ module EventsHelper
     [event.action_name, target].join(" ")
   end
 
-  def event_filter_link(key, tooltip)
+  def event_filter_link(key, text, tooltip)
     key = key.to_s
     active = 'active' if @event_filter.active?(key)
     link_opts = {
-      class: "event-filter-link btn btn-default #{active}",
+      class: "event-filter-link has-tooltip",
       id:    "#{key}_event_filter",
-      title: "Filter by #{tooltip.downcase}",
+      title: tooltip
     }
 
-    link_to request.path, link_opts do
-      content_tag(:span, ' ' + tooltip)
+    content_tag :li, class: active do
+      link_to request.path, link_opts do
+        content_tag(:span, ' ' + text)
+      end
     end
   end
 
-  def icon_for_event
-    {
-      EventFilter.push     => 'upload',
-      EventFilter.merged   => 'check-square-o',
-      EventFilter.comments => 'comments',
-      EventFilter.team     => 'user',
-    }
+  def event_filter_visible(feature_key)
+    return true unless @project
+
+    @project.feature_available?(feature_key, current_user)
+  end
+
+  def comments_visible?
+    event_filter_visible(:repository) ||
+      event_filter_visible(:merge_requests) ||
+      event_filter_visible(:issues)
   end
 
   def event_preposition(event)
@@ -64,11 +83,7 @@ module EventsHelper
       words << event.ref_name
       words << "at"
     elsif event.commented?
-      if event.note_commit?
-        words << event.note_short_commit_id
-      else
-        words << "##{truncate event.note_target_iid}"
-      end
+      words << event.note_target_reference
       words << "at"
     elsif event.milestone?
       words << "##{event.target_iid}" if event.target_iid
@@ -86,26 +101,16 @@ module EventsHelper
 
   def event_feed_url(event)
     if event.issue?
-      namespace_project_issue_url(event.project.namespace, event.project,
+      project_issue_url(event.project,
                                   event.issue)
     elsif event.merge_request?
-      namespace_project_merge_request_url(event.project.namespace,
-                                          event.project, event.merge_request)
-    elsif event.note? && event.note_commit?
-      namespace_project_commit_url(event.project.namespace, event.project,
+      project_merge_request_url(event.project, event.merge_request)
+    elsif event.commit_note?
+      project_commit_url(event.project,
                                    event.note_target)
     elsif event.note?
       if event.note_target
-        if event.note_commit?
-          namespace_project_commit_path(event.project.namespace, event.project,
-                                        event.note_commit_id,
-                                        anchor: dom_id(event.target))
-        elsif event.note_project_snippet?
-          namespace_project_snippet_path(event.project.namespace,
-                                         event.project, event.note_target)
-        else
-          event_note_target_path(event)
-        end
+        event_note_target_path(event)
       end
     elsif event.push?
       push_event_feed_url(event)
@@ -115,15 +120,15 @@ module EventsHelper
   def push_event_feed_url(event)
     if event.push_with_commits? && event.md_ref?
       if event.commits_count > 1
-        namespace_project_compare_url(event.project.namespace, event.project,
+        project_compare_url(event.project,
                                       from: event.commit_from, to:
                                       event.commit_to)
       else
-        namespace_project_commit_url(event.project.namespace, event.project,
+        project_commit_url(event.project,
                                      id: event.commit_to)
       end
     else
-      namespace_project_commits_url(event.project.namespace, event.project,
+      project_commits_url(event.project,
                                     event.ref_name)
     end
   end
@@ -141,74 +146,70 @@ module EventsHelper
   end
 
   def event_note_target_path(event)
-    if event.note? && event.note_commit?
-      namespace_project_commit_path(event.project.namespace, event.project,
-                                    event.note_target)
+    if event.commit_note?
+      project_commit_path(event.project, event.note_target, anchor: dom_id(event.target))
+    elsif event.project_snippet_note?
+      project_snippet_path(event.project, event.note_target, anchor: dom_id(event.target))
     else
       polymorphic_path([event.project.namespace.becomes(Namespace),
                         event.project, event.note_target],
-                       anchor: dom_id(event.target))
+                        anchor: dom_id(event.target))
     end
   end
 
   def event_note_title_html(event)
     if event.note_target
-      if event.note_commit?
-        link_to(
-          namespace_project_commit_path(event.project.namespace, event.project,
-                                        event.note_commit_id,
-                                        anchor: dom_id(event.target)),
-          class: "commit_short_id"
-        ) do
-          "#{event.note_target_type} #{event.note_short_commit_id}"
+      text = raw("#{event.note_target_type} ") +
+        if event.commit_note?
+          content_tag(:span, event.note_target_reference, class: 'commit-sha')
+        else
+          event.note_target_reference
         end
-      elsif event.note_project_snippet?
-        link_to(namespace_project_snippet_path(event.project.namespace,
-                                               event.project,
-                                               event.note_target)) do
-          "#{event.note_target_type} ##{truncate event.note_target_id}"
-        end
-      else
-        link_to event_note_target_path(event) do
-          "#{event.note_target_type} ##{truncate event.note_target_iid}"
-        end
-      end
+
+      link_to(text, event_note_target_path(event), title: event.target_title, class: 'has-tooltip')
     else
-      content_tag :strong do
-        "(deleted)"
-      end
+      content_tag(:strong, '(deleted)')
     end
   end
 
   def event_note(text, options = {})
     text = first_line_in_markdown(text, 150, options)
-    sanitize(text, tags: %w(a img b pre code p span))
+
+    sanitize(
+      text,
+      tags: %w(a img gl-emoji b pre code p span),
+      attributes: Rails::Html::WhiteListSanitizer.allowed_attributes + ['style', 'data-src', 'data-name', 'data-unicode-version']
+    )
   end
 
   def event_commit_title(message)
-    escape_once(truncate(message.split("\n").first, length: 70))
+    message ||= ''
+    (message.split("\n").first || "").truncate(70)
   rescue
     "--broken encoding"
   end
 
-  def event_to_atom(xml, event)
-    if event.proper?
-      xml.entry do
-        event_link = event_feed_url(event)
-        event_title = event_feed_title(event)
-        event_summary = event_feed_summary(event)
+  def event_row_class(event)
+    if event.body?
+      "event-block"
+    else
+      "event-inline"
+    end
+  end
 
-        xml.id      "tag:#{request.host},#{event.created_at.strftime("%Y-%m-%d")}:#{event.id}"
-        xml.link    href: event_link
-        xml.title   truncate(event_title, length: 80)
-        xml.updated event.created_at.xmlschema
-        xml.media   :thumbnail, width: "40", height: "40", url: image_url(avatar_icon(event.author_email))
-        xml.author do |author|
-          xml.name event.author_name
-          xml.email event.author_email
-        end
+  def icon_for_event(note)
+    icon_name = ICON_NAMES_BY_EVENT_TYPE[note]
+    sprite_icon(icon_name) if icon_name
+  end
 
-        xml.summary(type: "xhtml") { |x| x << event_summary unless event_summary.nil? }
+  def icon_for_profile_event(event)
+    if current_path?('users#show')
+      content_tag :div, class: "system-note-image #{event.action_name.parameterize}-icon" do
+        icon_for_event(event.action_name)
+      end
+    else
+      content_tag :div, class: 'system-note-image user-avatar' do
+        author_avatar(event, size: 32)
       end
     end
   end

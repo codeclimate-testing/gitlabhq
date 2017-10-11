@@ -1,25 +1,60 @@
 class Projects::VariablesController < Projects::ApplicationController
-  before_action :ci_project
-  before_action :authorize_admin_project!
+  before_action :variable, only: [:show, :update, :destroy]
+  before_action :authorize_admin_build!
 
   layout 'project_settings'
+
+  def index
+    redirect_to project_settings_ci_cd_path(@project)
+  end
 
   def show
   end
 
   def update
-    if ci_project.update_attributes(project_params)
-      Ci::EventService.new.change_project_settings(current_user, ci_project)
-
-      redirect_to namespace_project_variables_path(project.namespace, project), notice: 'Variables were successfully updated.'
+    if variable.update(variable_params)
+      redirect_to project_variables_path(project),
+                  notice: 'Variable was successfully updated.'
     else
-      render action: 'show'
+      render "show"
+    end
+  end
+
+  def create
+    @variable = project.variables.create(variable_params)
+      .present(current_user: current_user)
+
+    if @variable.persisted?
+      redirect_to project_settings_ci_cd_path(project),
+                  notice: 'Variable was successfully created.'
+    else
+      render "show"
+    end
+  end
+
+  def destroy
+    if variable.destroy
+      redirect_to project_settings_ci_cd_path(project),
+                  status: 302,
+                  notice: 'Variable was successfully removed.'
+    else
+      redirect_to project_settings_ci_cd_path(project),
+                  status: 302,
+                  notice: 'Failed to remove the variable.'
     end
   end
 
   private
 
-  def project_params
-    params.require(:project).permit({ variables_attributes: [:id, :key, :value, :_destroy] })
+  def variable_params
+    params.require(:variable).permit(*variable_params_attributes)
+  end
+
+  def variable_params_attributes
+    %i[id key value protected _destroy]
+  end
+
+  def variable
+    @variable ||= project.variables.find(params[:id]).present(current_user: current_user)
   end
 end

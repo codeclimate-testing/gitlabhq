@@ -1,4 +1,4 @@
-# Helper methods for Gitlab::Markdown filter specs
+# Helper methods for Banzai filter specs
 #
 # Must be included into specs manually
 module FilterSpecHelper
@@ -10,36 +10,48 @@ module FilterSpecHelper
   # if none is provided.
   #
   # html     - HTML String to pass to the filter's `call` method.
-  # contexts - Hash context for the filter. (default: {project: project})
+  # context - Hash context for the filter. (default: {project: project})
   #
   # Returns a Nokogiri::XML::DocumentFragment
-  def filter(html, contexts = {})
+  def filter(html, context = {})
     if defined?(project)
-      contexts.reverse_merge!(project: project)
+      context.reverse_merge!(project: project)
     end
 
-    described_class.call(html, contexts)
+    described_class.call(html, context)
   end
 
   # Run text through HTML::Pipeline with the current filter and return the
   # result Hash
   #
   # body     - String text to run through the pipeline
-  # contexts - Hash context for the filter. (default: {project: project})
+  # context - Hash context for the filter. (default: {project: project})
   #
   # Returns the Hash
-  def pipeline_result(body, contexts = {})
-    contexts.reverse_merge!(project: project) if defined?(project)
+  def pipeline_result(body, context = {})
+    context.reverse_merge!(project: project) if defined?(project)
 
-    pipeline = HTML::Pipeline.new([described_class], contexts)
+    pipeline = HTML::Pipeline.new([described_class], context)
     pipeline.call(body)
   end
 
-  def reference_pipeline_result(body, contexts = {})
-    contexts.reverse_merge!(project: project) if defined?(project)
+  def reference_pipeline(context = {})
+    context.reverse_merge!(project: project) if defined?(project)
 
-    pipeline = HTML::Pipeline.new([described_class, Gitlab::Markdown::ReferenceGathererFilter], contexts)
-    pipeline.call(body)
+    filters = [
+      Banzai::Filter::AutolinkFilter,
+      described_class
+    ]
+
+    HTML::Pipeline.new(filters, context)
+  end
+
+  def reference_pipeline_result(body, context = {})
+    reference_pipeline(context).call(body)
+  end
+
+  def reference_filter(html, context = {})
+    reference_pipeline(context).to_document(html)
   end
 
   # Modify a String reference to make it invalid
@@ -51,12 +63,12 @@ module FilterSpecHelper
   #
   # Returns a String
   def invalidate_reference(reference)
-    if reference =~ /\A(.+)?.\d+\z/
+    if reference =~ /\A(.+)?[^\d]\d+\z/
       # Integer-based reference with optional project prefix
-      reference.gsub(/\d+\z/) { |i| i.to_i + 1 }
-    elsif reference =~ /\A(.+@)?(\h{6,40}\z)/
+      reference.gsub(/\d+\z/) { |i| i.to_i + 10_000 }
+    elsif reference =~ /\A(.+@)?(\h{7,40}\z)/
       # SHA-based reference with optional prefix
-      reference.gsub(/\h{6,40}\z/) { |v| v.reverse }
+      reference.gsub(/\h{7,40}\z/) { |v| v.reverse }
     else
       reference.gsub(/\w+\z/) { |v| v.reverse }
     end
@@ -65,6 +77,6 @@ module FilterSpecHelper
   # Shortcut to Rails' auto-generated routes helpers, to avoid including the
   # module
   def urls
-    Gitlab::Application.routes.url_helpers
+    Gitlab::Routing.url_helpers
   end
 end

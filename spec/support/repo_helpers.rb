@@ -45,12 +45,12 @@ eos
 
   def another_sample_commit
     OpenStruct.new(
-        id: "e56497bb5f03a90a51293fc6d516788730953899",
-        parent_id: '4cd80ccab63c82b4bad16faa5193fbd2aa06df40',
-        author_full_name: "Sytse Sijbrandij",
-        author_email: "sytse@gitlab.com",
-        files_changed_count: 1,
-        message: <<eos
+      id: "e56497bb5f03a90a51293fc6d516788730953899",
+      parent_id: '4cd80ccab63c82b4bad16faa5193fbd2aa06df40',
+      author_full_name: "Sytse Sijbrandij",
+      author_email: "sytse@gitlab.com",
+      files_changed_count: 1,
+      message: <<eos
 Add directory structure for tree_helper spec
 
 This directory structure is needed for a testing the method flatten_tree(tree) in the TreeHelper module
@@ -92,21 +92,21 @@ eos
     changes = [
       {
         line_code: 'a5cc2925ca8258af241be7e5b0381edf30266302_20_20',
-        file_path: '.gitignore',
+        file_path: '.gitignore'
       },
       {
         line_code: '7445606fbf8f3683cd42bdc54b05d7a0bc2dfc44_4_6',
-        file_path: '.gitmodules',
+        file_path: '.gitmodules'
       }
     ]
 
-    commits = [
-      '5937ac0a7beb003549fc5fd26fc247adbce4a52e',
-      '570e7b2abdd848b95f2f578043fc23bd6f6fd24d',
-      '6f6d7e7ed97bb5f0054f2b1df789b39ca89b6ff9',
-      'd14d6c0abdd253381df51a723d58691b2ee1ab08',
-      'c1acaa58bbcbc3eafe538cb8274ba387047b69f8',
-    ].reverse # last commit is recent one
+    commits = %w(
+      5937ac0a7beb003549fc5fd26fc247adbce4a52e
+      570e7b2abdd848b95f2f578043fc23bd6f6fd24d
+      6f6d7e7ed97bb5f0054f2b1df789b39ca89b6ff9
+      d14d6c0abdd253381df51a723d58691b2ee1ab08
+      c1acaa58bbcbc3eafe538cb8274ba387047b69f8
+    ).reverse # last commit is recent one
 
     OpenStruct.new(
       source_branch: 'master',

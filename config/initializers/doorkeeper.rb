@@ -6,13 +6,19 @@ Doorkeeper.configure do
   # This block will be called to check whether the resource owner is authenticated or not.
   resource_owner_authenticator do
     # Put your resource owner authentication logic here.
-    # Ensure user is redirected to redirect_uri after login
-    session[:user_return_to] = request.fullpath
-    current_user || redirect_to(new_user_session_url)
+    if current_user
+      current_user
+    else
+      # Ensure user is redirected to redirect_uri after login
+      session[:user_return_to] = request.fullpath
+      redirect_to(new_user_session_url)
+      nil
+    end
   end
 
   resource_owner_from_credentials do |routes|
-    Gitlab::Auth.new.find(params[:username], params[:password])
+    user = Gitlab::Auth.find_with_user_password(params[:username], params[:password])
+    user unless user.try(:two_factor_enabled?)
   end
 
   # If you want to restrict access to the web interface for adding oauth authorized applications, you need to declare the block below.
@@ -51,8 +57,8 @@ Doorkeeper.configure do
   # Define access token scopes for your provider
   # For more information go to
   # https://github.com/doorkeeper-gem/doorkeeper/wiki/Using-Scopes
-  default_scopes  :api
-  #optional_scopes :write, :update
+  default_scopes(*Gitlab::Auth::DEFAULT_SCOPES)
+  optional_scopes(*Gitlab::Auth.optional_scopes)
 
   # Change the way client credentials are retrieved from the request object.
   # By default it retrieves first from the `HTTP_AUTHORIZATION` header, then
@@ -71,7 +77,7 @@ Doorkeeper.configure do
   # The value can be any string. Use nil to disable this feature. When disabled, clients must provide a valid URL
   # (Similar behaviour: https://developers.google.com/accounts/docs/OAuth2InstalledApp#choosingredirecturi)
   #
-  native_redirect_uri nil#'urn:ietf:wg:oauth:2.0:oob'
+  native_redirect_uri nil # 'urn:ietf:wg:oauth:2.0:oob'
 
   # Specify what grant flows are enabled in array of Strings. The valid
   # strings and the flows they enable are:
@@ -81,16 +87,14 @@ Doorkeeper.configure do
   # "password"           => Resource Owner Password Credentials Grant Flow
   # "client_credentials" => Client Credentials Grant Flow
   #
-  # If not specified, Doorkeeper enables all the four grant flows.
-  #
-  grant_flows %w(authorization_code password client_credentials)
+  grant_flows %w(authorization_code implicit password client_credentials)
 
   # Under some circumstances you might want to have applications auto-approved,
   # so that the user skips the authorization step.
   # For example if dealing with trusted a application.
-  # skip_authorization do |resource_owner, client|
-  #   client.superapp? or resource_owner.admin?
-  # end
+  skip_authorization do |resource_owner, client|
+    client.application.trusted?
+  end
 
   # WWW-Authenticate Realm (default "Doorkeeper").
   # realm "Doorkeeper"

@@ -15,11 +15,11 @@ describe Gitlab::GoogleCodeImport::Importer do
   subject { described_class.new(project) }
 
   before do
+    project.team << [project.creator, :master]
     project.create_import_data(data: import_data)
   end
 
   describe "#execute" do
-
     it "imports status labels" do
       subject.execute
 
@@ -32,9 +32,9 @@ describe Gitlab::GoogleCodeImport::Importer do
       subject.execute
 
       %w(
-        Type-Defect Type-Enhancement Type-Task Type-Review Type-Other Milestone-0.12 Priority-Critical 
-        Priority-High Priority-Medium Priority-Low OpSys-All OpSys-Windows OpSys-Linux OpSys-OSX Security 
-        Performance Usability Maintainability Component-Panel Component-Taskbar Component-Battery 
+        Type-Defect Type-Enhancement Type-Task Type-Review Type-Other Milestone-0.12 Priority-Critical
+        Priority-High Priority-Medium Priority-Low OpSys-All OpSys-Windows OpSys-Linux OpSys-OSX Security
+        Performance Usability Maintainability Component-Panel Component-Taskbar Component-Battery
         Component-Systray Component-Clock Component-Launcher Component-Tint2conf Component-Docs Component-New
       ).each do |label|
         label.sub!("-", ": ")
@@ -49,7 +49,7 @@ describe Gitlab::GoogleCodeImport::Importer do
       expect(issue).not_to be_nil
       expect(issue.iid).to eq(169)
       expect(issue.author).to eq(project.creator)
-      expect(issue.assignee).to eq(mapped_user)
+      expect(issue.assignees).to eq([mapped_user])
       expect(issue.state).to eq("closed")
       expect(issue.label_names).to include("Priority: Medium")
       expect(issue.label_names).to include("Status: Fixed")

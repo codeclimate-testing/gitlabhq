@@ -1,30 +1,29 @@
-# == Schema Information
-#
-# Table name: emails
-#
-#  id         :integer          not null, primary key
-#  user_id    :integer          not null
-#  email      :string(255)      not null
-#  created_at :datetime
-#  updated_at :datetime
-#
-
 class Email < ActiveRecord::Base
   include Sortable
 
   belongs_to :user
 
   validates :user_id, presence: true
-  validates :email, presence: true, email: { strict_mode: true }, uniqueness: true
+  validates :email, presence: true, uniqueness: true, email: true
   validate :unique_email, if: ->(email) { email.email_changed? }
 
-  before_validation :cleanup_email
+  scope :confirmed, -> { where.not(confirmed_at: nil) }
 
-  def cleanup_email
-    self.email = self.email.downcase.strip
+  after_commit :update_invalid_gpg_signatures, if: -> { previous_changes.key?('confirmed_at') }
+
+  devise :confirmable
+  self.reconfirmable = false  # currently email can't be changed, no need to reconfirm
+
+  def email=(value)
+    write_attribute(:email, value.downcase.strip)
   end
 
   def unique_email
     self.errors.add(:email, 'has already been taken') if User.exists?(email: self.email)
+  end
+
+  # once email is confirmed, update the gpg signatures
+  def update_invalid_gpg_signatures
+    user.update_invalid_gpg_signatures if confirmed?
   end
 end

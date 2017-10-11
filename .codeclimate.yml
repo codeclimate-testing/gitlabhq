@@ -17,6 +17,8 @@ engines:
     config:
       languages:
       - ruby
+  structure:
+    channel: beta
 ratings:
   paths:
   - Gemfile.lock

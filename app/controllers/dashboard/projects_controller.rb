@@ -1,43 +1,61 @@
 class Dashboard::ProjectsController < Dashboard::ApplicationController
-  before_action :event_filter
+  include ParamsBackwardCompatibility
+
+  before_action :set_non_archived_param
+  before_action :default_sorting
 
   def index
-    @projects = current_user.authorized_projects.sorted_by_activity.non_archived
-    @projects = @projects.includes(:namespace)
-    @last_push = current_user.recent_push
+    @projects = load_projects(params.merge(non_public: true)).page(params[:page])
 
     respond_to do |format|
       format.html
       format.atom do
-        event_filter
         load_events
-        render layout: false
+        render layout: 'xml.atom'
+      end
+      format.json do
+        render json: {
+          html: view_to_html_string("dashboard/projects/_projects", locals: { projects: @projects })
+        }
       end
     end
   end
 
   def starred
-    @projects = current_user.starred_projects
-    @projects = @projects.includes(:namespace, :forked_from_project, :tags)
-    @projects = @projects.sort(@sort = params[:sort])
-    @last_push = current_user.recent_push
+    @projects = load_projects(params.merge(starred: true))
+      .includes(:forked_from_project, :tags).page(params[:page])
+
     @groups = []
 
     respond_to do |format|
       format.html
-
       format.json do
-        load_events
-        pager_json("events/_events", @events.count)
+        render json: {
+          html: view_to_html_string("dashboard/projects/_projects", locals: { projects: @projects })
+        }
       end
     end
   end
 
   private
 
+  def default_sorting
+    params[:sort] ||= 'latest_activity_desc'
+    @sort = params[:sort]
+  end
+
+  def load_projects(finder_params)
+    ProjectsFinder
+      .new(params: finder_params, current_user: current_user)
+      .execute
+      .includes(:route, :creator, namespace: [:route, :owner])
+  end
+
   def load_events
-    @events = Event.in_projects(@projects.pluck(:id))
-    @events = @event_filter.apply_filter(@events).with_associations
-    @events = @events.limit(20).offset(params[:offset] || 0)
+    projects = load_projects(params.merge(non_public: true))
+
+    @events = EventCollection
+      .new(projects, offset: params[:offset].to_i, filter: event_filter)
+      .to_a
   end
 end

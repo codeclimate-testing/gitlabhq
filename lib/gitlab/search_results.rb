@@ -1,13 +1,35 @@
 module Gitlab
   class SearchResults
-    attr_reader :query
+    class FoundBlob
+      attr_reader :id, :filename, :basename, :ref, :startline, :data
 
-    # Limit search results by passed project ids
+      def initialize(opts = {})
+        @id = opts.fetch(:id, nil)
+        @filename = opts.fetch(:filename, nil)
+        @basename = opts.fetch(:basename, nil)
+        @ref = opts.fetch(:ref, nil)
+        @startline = opts.fetch(:startline, nil)
+        @data = opts.fetch(:data, nil)
+      end
+
+      def path
+        filename
+      end
+
+      def no_highlighting?
+        false
+      end
+    end
+
+    attr_reader :current_user, :query
+
+    # Limit search results by passed projects
     # It allows us to search only for projects user has access to
-    attr_reader :limit_project_ids
+    attr_reader :limit_projects
 
-    def initialize(limit_project_ids, query)
-      @limit_project_ids = limit_project_ids || Project.all
+    def initialize(current_user, limit_projects, query)
+      @current_user = current_user
+      @limit_projects = limit_projects || Project.all
       @query = Shellwords.shellescape(query) if query.present?
     end
 
@@ -26,10 +48,6 @@ module Gitlab
       end
     end
 
-    def total_count
-      @total_count ||= projects_count + issues_count + merge_requests_count + milestones_count
-    end
-
     def projects_count
       @projects_count ||= projects.count
     end
@@ -46,39 +64,43 @@ module Gitlab
       @milestones_count ||= milestones.count
     end
 
-    def empty?
-      total_count.zero?
+    def single_commit_result?
+      false
     end
 
     private
 
     def projects
-      Project.where(id: limit_project_ids).search(query)
+      limit_projects.search(query)
     end
 
     def issues
-      issues = Issue.where(project_id: limit_project_ids)
-      if query =~ /#(\d+)\z/
-        issues = issues.where(iid: $1)
-      else
-        issues = issues.full_search(query)
-      end
+      issues = IssuesFinder.new(current_user).execute.where(project_id: project_ids_relation)
+
+      issues =
+        if query =~ /#(\d+)\z/
+          issues.where(iid: $1)
+        else
+          issues.full_search(query)
+        end
+
       issues.order('updated_at DESC')
     end
 
     def milestones
-      milestones = Milestone.where(project_id: limit_project_ids)
+      milestones = Milestone.where(project_id: project_ids_relation)
       milestones = milestones.search(query)
       milestones.order('updated_at DESC')
     end
 
     def merge_requests
-      merge_requests = MergeRequest.in_projects(limit_project_ids)
-      if query =~ /[#!](\d+)\z/
-        merge_requests = merge_requests.where(iid: $1)
-      else
-        merge_requests = merge_requests.full_search(query)
-      end
+      merge_requests = MergeRequestsFinder.new(current_user).execute.in_projects(project_ids_relation)
+      merge_requests =
+        if query =~ /[#!](\d+)\z/
+          merge_requests.where(iid: $1)
+        else
+          merge_requests.full_search(query)
+        end
       merge_requests.order('updated_at DESC')
     end
 
@@ -88,6 +110,10 @@ module Gitlab
 
     def per_page
       20
+    end
+
+    def project_ids_relation
+      limit_projects.select(:id).reorder(nil)
     end
   end
 end

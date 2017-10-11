@@ -1,50 +1,39 @@
-# encoding: utf-8
-class ArtifactUploader < CarrierWave::Uploader::Base
+class ArtifactUploader < GitlabUploader
   storage :file
 
-  attr_accessor :build, :field
+  attr_reader :job, :field
 
-  def self.artifacts_path
-    File.expand_path('shared/artifacts/', Rails.root)
+  def self.local_artifacts_store
+    Gitlab.config.artifacts.path
   end
 
   def self.artifacts_upload_path
-    File.expand_path('shared/artifacts/tmp/uploads/', Rails.root)
+    File.join(self.local_artifacts_store, 'tmp/uploads/')
   end
 
-  def self.artifacts_cache_path
-    File.expand_path('shared/artifacts/tmp/cache/', Rails.root)
-  end
-
-  def initialize(build, field)
-    @build, @field = build, field
-  end
-
-  def artifacts_path
-    File.join(build.created_at.utc.strftime('%Y_%m'), build.project.id.to_s, build.id.to_s)
+  def initialize(job, field)
+    @job, @field = job, field
   end
 
   def store_dir
-    File.join(ArtifactUploader.artifacts_path, artifacts_path)
+    default_local_path
   end
 
   def cache_dir
-    File.join(ArtifactUploader.artifacts_cache_path, artifacts_path)
+    File.join(self.class.local_artifacts_store, 'tmp/cache')
   end
 
-  def file_storage?
-    self.class.storage == CarrierWave::Storage::File
+  def work_dir
+    File.join(self.class.local_artifacts_store, 'tmp/work')
   end
 
-  def exists?
-    file.try(:exists?)
+  private
+
+  def default_local_path
+    File.join(self.class.local_artifacts_store, default_path)
   end
 
-  def move_to_cache
-    true
-  end
-
-  def move_to_store
-    true
+  def default_path
+    File.join(job.created_at.utc.strftime('%Y_%m'), job.project_id.to_s, job.id.to_s)
   end
 end

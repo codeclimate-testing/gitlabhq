@@ -3,14 +3,25 @@ module SharedProject
 
   # Create a project without caring about what it's called
   step "I own a project" do
-    @project = create(:project, namespace: @user.namespace)
+    @project = create(:project, :repository, namespace: @user.namespace)
     @project.team << [@user, :master]
+  end
+
+  step "I own a project in some group namespace" do
+    @group = create(:group, name: 'some group')
+    @project = create(:project, namespace: @group)
+    @project.team << [@user, :master]
+  end
+
+  step "project exists in some group namespace" do
+    @group = create(:group, name: 'some group')
+    @project = create(:project, :repository, namespace: @group, public_builds: false)
   end
 
   # Create a specific project called "Shop"
   step 'I own project "Shop"' do
     @project = Project.find_by(name: "Shop")
-    @project ||= create(:project, name: "Shop", namespace: @user.namespace, snippets_enabled: true)
+    @project ||= create(:project, :repository, name: "Shop", namespace: @user.namespace)
     @project.team << [@user, :master]
   end
 
@@ -35,51 +46,39 @@ module SharedProject
   # Create another specific project called "Forum"
   step 'I own project "Forum"' do
     @project = Project.find_by(name: "Forum")
-    @project ||= create(:project, name: "Forum", namespace: @user.namespace, path: 'forum_project')
+    @project ||= create(:project, :repository, name: "Forum", namespace: @user.namespace, path: 'forum_project')
+    @project.build_project_feature
+    @project.project_feature.save
     @project.team << [@user, :master]
   end
 
   # Create an empty project without caring about the name
   step 'I own an empty project' do
-    @project = create(:empty_project,
+    @project = create(:project,
                       name: 'Empty Project', namespace: @user.namespace)
     @project.team << [@user, :master]
   end
 
   step 'I visit my empty project page' do
     project = Project.find_by(name: 'Empty Project')
-    visit namespace_project_path(project.namespace, project)
+    visit project_path(project)
   end
 
   step 'I visit project "Shop" activity page' do
     project = Project.find_by(name: 'Shop')
-    visit namespace_project_path(project.namespace, project)
+    visit project_path(project)
   end
 
   step 'project "Shop" has push event' do
     @project = Project.find_by(name: "Shop")
+    @event = create(:push_event, project: @project, author: @user)
 
-    data = {
-      before: Gitlab::Git::BLANK_SHA,
-      after: "6d394385cf567f80a8fd85055db1ab4c5295806f",
-      ref: "refs/heads/fix",
-      user_id: @user.id,
-      user_name: @user.name,
-      repository: {
-        name: @project.name,
-        url: "localhost/rubinius",
-        description: "",
-        homepage: "localhost/rubinius",
-        private: true
-      }
-    }
-
-    @event = Event.create(
-      project: @project,
-      action: Event::PUSHED,
-      data: data,
-      author_id: @user.id
-    )
+    create(:push_event_payload,
+           event: @event,
+           action: :created,
+           commit_to: '6d394385cf567f80a8fd85055db1ab4c5295806f',
+           ref: 'fix',
+           commit_count: 1)
   end
 
   step 'I should see project "Shop" activity feed' do
@@ -88,9 +87,9 @@ module SharedProject
   end
 
   step 'I should see project settings' do
-    expect(current_path).to eq edit_namespace_project_path(@project.namespace, @project)
+    expect(current_path).to eq edit_project_path(@project)
     expect(page).to have_content("Project name")
-    expect(page).to have_content("Features:")
+    expect(page).to have_content("Permissions")
   end
 
   def current_project
@@ -98,11 +97,23 @@ module SharedProject
   end
 
   # ----------------------------------------
+  # Project permissions
+  # ----------------------------------------
+
+  step 'I am member of a project with a guest role' do
+    @project.team << [@user, Gitlab::Access::GUEST]
+  end
+
+  step 'I am member of a project with a reporter role' do
+    @project.team << [@user, Gitlab::Access::REPORTER]
+  end
+
+  # ----------------------------------------
   # Visibility of archived project
   # ----------------------------------------
 
   step 'archived project "Archive"' do
-    create :project, :public, archived: true, name: 'Archive'
+    create(:project, :archived, :public, :repository, name: 'Archive')
   end
 
   step 'I should not see project "Archive"' do
@@ -125,7 +136,7 @@ module SharedProject
   # ----------------------------------------
 
   step 'private project "Enterprise"' do
-    create :project, name: 'Enterprise'
+    create(:project, :private, :repository, name: 'Enterprise')
   end
 
   step 'I should see project "Enterprise"' do
@@ -137,19 +148,23 @@ module SharedProject
   end
 
   step 'internal project "Internal"' do
-    create :project, :internal, name: 'Internal'
+    create(:project, :internal, :repository, name: 'Internal')
   end
 
   step 'I should see project "Internal"' do
-    expect(page).to have_content "Internal"
+    page.within '.js-projects-list-holder' do
+      expect(page).to have_content "Internal"
+    end
   end
 
   step 'I should not see project "Internal"' do
-    expect(page).not_to have_content "Internal"
+    page.within '.js-projects-list-holder' do
+      expect(page).not_to have_content "Internal"
+    end
   end
 
   step 'public project "Community"' do
-    create :project, :public, name: 'Community'
+    create(:project, :public, :repository, name: 'Community')
   end
 
   step 'I should see project "Community"' do
@@ -161,24 +176,33 @@ module SharedProject
   end
 
   step '"John Doe" owns private project "Enterprise"' do
-    user = user_exists("John Doe", username: "john_doe")
-    project = Project.find_by(name: "Enterprise")
-    project ||= create(:empty_project, name: "Enterprise", namespace: user.namespace)
-    project.team << [user, :master]
+    user_owns_project(
+      user_name: 'John Doe',
+      project_name: 'Enterprise'
+    )
+  end
+
+  step '"Mary Jane" owns private project "Enterprise"' do
+    user_owns_project(
+      user_name: 'Mary Jane',
+      project_name: 'Enterprise'
+    )
   end
 
   step '"John Doe" owns internal project "Internal"' do
-    user = user_exists("John Doe", username: "john_doe")
-    project = Project.find_by(name: "Internal")
-    project ||= create :empty_project, :internal, name: 'Internal', namespace: user.namespace
-    project.team << [user, :master]
+    user_owns_project(
+      user_name: 'John Doe',
+      project_name: 'Internal',
+      visibility: :internal
+    )
   end
 
   step '"John Doe" owns public project "Community"' do
-    user = user_exists("John Doe", username: "john_doe")
-    project = Project.find_by(name: "Community")
-    project ||= create :empty_project, :public, name: 'Community', namespace: user.namespace
-    project.team << [user, :master]
+    user_owns_project(
+      user_name: 'John Doe',
+      project_name: 'Community',
+      visibility: :public
+    )
   end
 
   step 'public empty project "Empty Public Project"' do
@@ -188,6 +212,10 @@ module SharedProject
   step 'project "Community" has comments' do
     project = Project.find_by(name: "Community")
     2.times { create(:note_on_issue, project: project) }
+  end
+
+  step 'trending projects are refreshed' do
+    TrendingProject.refresh!
   end
 
   step 'project "Shop" has labels: "bug", "feature", "enhancement"' do
@@ -204,13 +232,37 @@ module SharedProject
 
   step 'project "Shop" has CI build' do
     project = Project.find_by(name: "Shop")
-    create :ci_commit, gl_project: project, sha: project.commit.sha
+    pipeline = create :ci_pipeline, project: project, sha: project.commit.sha, ref: 'master'
+    pipeline.skip
   end
 
   step 'I should see last commit with CI status' do
-    page.within ".project-last-commit" do
+    page.within ".blob-commit-info" do
       expect(page).to have_content(project.commit.sha[0..6])
-      expect(page).to have_content("skipped")
+      expect(page).to have_link("Commit: skipped")
     end
+  end
+
+  step 'The project is internal' do
+    @project.update(visibility_level: Gitlab::VisibilityLevel::INTERNAL)
+  end
+
+  step 'public access for builds is enabled' do
+    @project.update(public_builds: true)
+  end
+
+  step 'public access for builds is disabled' do
+    @project.update(public_builds: false)
+  end
+
+  step 'project "Shop" has a "Bugfix MR" merge request open' do
+    create(:merge_request, title: "Bugfix MR", target_project: project, source_project: project, author: project.users.first)
+  end
+
+  def user_owns_project(user_name:, project_name:, visibility: :private)
+    user = user_exists(user_name, username: user_name.gsub(/\s/, '').underscore)
+    project = Project.find_by(name: project_name)
+    project ||= create(:project, visibility, name: project_name, namespace: user.namespace)
+    project.team << [user, :master]
   end
 end

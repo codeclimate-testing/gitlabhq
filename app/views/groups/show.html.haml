@@ -1,41 +1,19 @@
-- unless can?(current_user, :read_group, @group)
-  - @disable_search_panel = true
+- @no_container = true
+- breadcrumb_title "Details"
 
 = content_for :meta_tags do
-  - if current_user
-    = auto_discovery_link_tag(:atom, group_url(@group, format: :atom, private_token: current_user.private_token), title: "#{@group.name} activity")
+  = auto_discovery_link_tag(:atom, group_url(@group, rss_url_options), title: "#{@group.name} activity")
 
-.dashboard
-  .header-with-avatar.clearfix
-    = image_tag group_icon(@group), class: "avatar group-avatar s90"
-    %h3
-      = @group.name
-    .username
-      @#{@group.path}
-    - if @group.description.present?
-      .description
-        = markdown(@group.description, pipeline: :description)
-  %hr
+= render 'groups/home_panel'
 
-  = render 'shared/show_aside'
+.groups-header{ class: container_class }
+  .top-area
+    = render 'groups/show_nav'
+    .nav-controls
+      = render 'shared/projects/search_form'
+      = render 'shared/projects/dropdown'
+      - if can? current_user, :create_projects, @group
+        = link_to new_project_path(namespace_id: @group.id), class: 'btn btn-new pull-right' do
+          New Project
 
-  - if can?(current_user, :read_group, @group)
-    .row
-      %section.activities.col-md-7
-        .hidden-xs
-          - if current_user
-            = render "events/event_last_push", event: @last_push
-            .pull-right
-              = link_to group_path(@group, { format: :atom, private_token: current_user.private_token }), title: "Feed", class: 'btn rss-btn' do
-                %i.fa.fa-rss
-
-            = render 'shared/event_filter'
-            %hr
-
-        .content_list
-        = spinner
-      %aside.side.col-md-5
-        = render "projects", projects: @projects
-  - else
-    %p
-      This group does not have public projects
+  = render "projects", projects: @projects

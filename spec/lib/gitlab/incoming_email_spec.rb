@@ -7,24 +7,8 @@ describe Gitlab::IncomingEmail do
         stub_incoming_email_setting(enabled: true)
       end
 
-      context "when the address is valid" do
-        before do
-          stub_incoming_email_setting(address: "replies+%{key}@example.com")
-        end
-
-        it "returns true" do
-          expect(described_class.enabled?).to be_truthy
-        end
-      end
-
-      context "when the address is invalid" do
-        before do
-          stub_incoming_email_setting(address: "replies@example.com")
-        end
-
-        it "returns false" do
-          expect(described_class.enabled?).to be_falsey
-        end
+      it 'returns true' do
+        expect(described_class.enabled?).to be_truthy
       end
     end
 
@@ -36,6 +20,48 @@ describe Gitlab::IncomingEmail do
       it "returns false" do
         expect(described_class.enabled?).to be_falsey
       end
+    end
+  end
+
+  describe 'self.supports_wildcard?' do
+    context 'address contains the wildard placeholder' do
+      before do
+        stub_incoming_email_setting(address: 'replies+%{key}@example.com')
+      end
+
+      it 'confirms that wildcard is supported' do
+        expect(described_class.supports_wildcard?).to be_truthy
+      end
+    end
+
+    context "address doesn't contain the wildcard placeholder" do
+      before do
+        stub_incoming_email_setting(address: 'replies@example.com')
+      end
+
+      it 'returns that wildcard is not supported' do
+        expect(described_class.supports_wildcard?).to be_falsey
+      end
+    end
+
+    context 'address is not set' do
+      before do
+        stub_incoming_email_setting(address: nil)
+      end
+
+      it 'returns that wildard is not supported' do
+        expect(described_class.supports_wildcard?).to be_falsey
+      end
+    end
+  end
+
+  context 'self.unsubscribe_address' do
+    before do
+      stub_incoming_email_setting(address: 'replies+%{key}@example.com')
+    end
+
+    it 'returns the address with interpolated reply key and unsubscribe suffix' do
+      expect(described_class.unsubscribe_address('key')).to eq('replies+key+unsubscribe@example.com')
     end
   end
 
@@ -56,6 +82,27 @@ describe Gitlab::IncomingEmail do
 
     it "returns reply key" do
       expect(described_class.key_from_address("replies+key@example.com")).to eq("key")
+    end
+  end
+
+  context 'self.key_from_fallback_message_id' do
+    it 'returns reply key' do
+      expect(described_class.key_from_fallback_message_id('reply-key@localhost')).to eq('key')
+    end
+  end
+
+  context 'self.scan_fallback_references' do
+    let(:references) do
+      '<issue_1@localhost>' +
+        ' <reply-59d8df8370b7e95c5a49fbf86aeb2c93@localhost>' +
+        ',<exchange@microsoft.com>'
+    end
+
+    it 'returns reply key' do
+      expect(described_class.scan_fallback_references(references))
+        .to eq(%w[issue_1@localhost
+                  reply-59d8df8370b7e95c5a49fbf86aeb2c93@localhost
+                  exchange@microsoft.com])
     end
   end
 end

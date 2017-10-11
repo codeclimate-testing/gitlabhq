@@ -1,18 +1,6 @@
-# == Schema Information
-#
-# Table name: releases
-#
-#  id          :integer          not null, primary key
-#  tag         :string(255)
-#  description :text
-#  project_id  :integer
-#  created_at  :datetime
-#  updated_at  :datetime
-#
-
 require 'rails_helper'
 
-RSpec.describe Release, type: :model do
+RSpec.describe Release do
   let(:release) { create(:release) }
 
   it { expect(release).to be_valid }

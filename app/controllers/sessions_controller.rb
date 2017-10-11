@@ -1,16 +1,23 @@
 class SessionsController < Devise::SessionsController
   include AuthenticatesWithTwoFactor
+  include Devise::Controllers::Rememberable
+  include Recaptcha::ClientHelper
 
-  prepend_before_action :authenticate_with_two_factor, only: [:create]
+  skip_before_action :check_two_factor_requirement, only: [:destroy]
+
+  prepend_before_action :check_initial_setup, only: [:new]
+  prepend_before_action :authenticate_with_two_factor,
+    if: :two_factor_enabled?, only: [:create]
   prepend_before_action :store_redirect_path, only: [:new]
+
   before_action :auto_sign_in_with_provider, only: [:new]
+  before_action :load_recaptcha
+
+  after_action :log_failed_login, only: [:new], if: :failed_login?
 
   def new
-    if Gitlab.config.ldap.enabled
-      @ldap_servers = Gitlab::LDAP::Config.servers
-    else
-      @ldap_servers = []
-    end
+    set_minimum_password_length
+    @ldap_servers = Gitlab::LDAP::Config.available_servers
 
     super
   end
@@ -22,31 +29,69 @@ class SessionsController < Devise::SessionsController
         resource.update_attributes(reset_password_token: nil,
                                    reset_password_sent_at: nil)
       end
-      authenticated_with = user_params[:otp_attempt] ? "two-factor" : "standard"
-      log_audit_event(current_user, with: authenticated_with)
+      # hide the signed-in notification
+      flash[:notice] = nil
+      log_audit_event(current_user, resource, with: authentication_method)
+      log_user_activity(current_user)
     end
+  end
+
+  def destroy
+    Gitlab::AppLogger.info("User Logout: username=#{current_user.username} ip=#{request.remote_ip}")
+    super
+    # hide the signed_out notice
+    flash[:notice] = nil
   end
 
   private
 
+  def log_failed_login
+    Gitlab::AppLogger.info("Failed Login: username=#{user_params[:login]} ip=#{request.remote_ip}")
+  end
+
+  def failed_login?
+    (options = env["warden.options"]) && options[:action] == "unauthenticated"
+  end
+
+  def login_counter
+    @login_counter ||= Gitlab::Metrics.counter(:user_session_logins_total, 'User sign in count')
+  end
+
+  # Handle an "initial setup" state, where there's only one user, it's an admin,
+  # and they require a password change.
+  def check_initial_setup
+    return unless User.limit(2).count == 1 # Count as much 2 to know if we have exactly one
+
+    user = User.admins.last
+
+    return unless user && user.require_password_creation?
+
+    Users::UpdateService.new(current_user, user: user).execute do |user|
+      @token = user.generate_reset_token
+    end
+
+    redirect_to edit_user_password_path(reset_password_token: @token),
+      notice: "Please create a password for your new account."
+  end
+
   def user_params
-    params.require(:user).permit(:login, :password, :remember_me, :otp_attempt)
+    params.require(:user).permit(:login, :password, :remember_me, :otp_attempt, :device_response)
   end
 
   def find_user
-    if user_params[:login]
-      User.by_login(user_params[:login])
-    elsif user_params[:otp_attempt] && session[:otp_user_id]
+    if session[:otp_user_id]
       User.find(session[:otp_user_id])
+    elsif user_params[:login]
+      User.by_login(user_params[:login])
     end
   end
-  
+
   def store_redirect_path
     redirect_path =
       if request.referer.present? && (params['redirect_to_referer'] == 'yes')
         referer_uri = URI(request.referer)
         if referer_uri.host == Gitlab.config.gitlab.host
-          referer_uri.path
+          referer_uri.request_uri
         else
           request.fullpath
         end
@@ -56,55 +101,61 @@ class SessionsController < Devise::SessionsController
 
     # Prevent a 'you are already signed in' message directly after signing:
     # we should never redirect to '/users/sign_in' after signing in successfully.
-    unless redirect_path == new_user_session_path
+    unless URI(redirect_path).path == new_user_session_path
       store_location_for(:redirect, redirect_path)
     end
   end
 
-  def authenticate_with_two_factor
-    user = self.resource = find_user
-
-    return unless user && user.two_factor_enabled?
-
-    if user_params[:otp_attempt].present? && session[:otp_user_id]
-      if valid_otp_attempt?(user)
-        # Remove any lingering user data from login
-        session.delete(:otp_user_id)
-
-        sign_in(user) and return
-      else
-        flash.now[:alert] = 'Invalid two-factor code.'
-        render :two_factor and return
-      end
-    else
-      if user && user.valid_password?(user_params[:password])
-        prompt_for_two_factor(user)
-      end
-    end
+  def two_factor_enabled?
+    find_user.try(:two_factor_enabled?)
   end
 
   def auto_sign_in_with_provider
     provider = Gitlab.config.omniauth.auto_sign_in_with_provider
     return unless provider.present?
 
-    # Auto sign in with an Omniauth provider only if the standard "you need to sign-in" alert is 
-    # registered or no alert at all. In case of another alert (such as a blocked user), it is safer  
+    # If a "auto_sign_in" query parameter is set to a falsy value, don't auto sign-in.
+    # Otherwise, the default is to auto sign-in.
+    return if Gitlab::Utils.to_boolean(params[:auto_sign_in]) == false
+
+    # Auto sign in with an Omniauth provider only if the standard "you need to sign-in" alert is
+    # registered or no alert at all. In case of another alert (such as a blocked user), it is safer
     # to do nothing to prevent redirection loops with certain Omniauth providers.
     return unless flash[:alert].blank? || flash[:alert] == I18n.t('devise.failure.unauthenticated')
-    
+
     # Prevent alert from popping up on the first page shown after authentication.
-    flash[:alert] = nil 
-    
-    redirect_to user_omniauth_authorize_path(provider.to_sym)
+    flash[:alert] = nil
+
+    redirect_to omniauth_authorize_path(:user, provider)
   end
 
   def valid_otp_attempt?(user)
     user.validate_and_consume_otp!(user_params[:otp_attempt]) ||
-    user.invalidate_otp_backup_code!(user_params[:otp_attempt])
+      user.invalidate_otp_backup_code!(user_params[:otp_attempt])
   end
 
-  def log_audit_event(user, options = {})
-    AuditEventService.new(user, user, options).
-      for_authentication.security_event
+  def log_audit_event(user, resource, options = {})
+    Gitlab::AppLogger.info("Successful Login: username=#{resource.username} ip=#{request.remote_ip} method=#{options[:with]} admin=#{resource.admin?}")
+    AuditEventService.new(user, user, options)
+      .for_authentication.security_event
+  end
+
+  def log_user_activity(user)
+    login_counter.increment
+    Users::ActivityService.new(user, 'login').execute
+  end
+
+  def load_recaptcha
+    Gitlab::Recaptcha.load_configurations!
+  end
+
+  def authentication_method
+    if user_params[:otp_attempt]
+      "two-factor"
+    elsif user_params[:device_response]
+      "two-factor-via-u2f-device"
+    else
+      "standard"
+    end
   end
 end

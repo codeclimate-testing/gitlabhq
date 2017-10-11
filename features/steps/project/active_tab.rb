@@ -16,37 +16,53 @@ class Spinach::Features::ProjectActiveTab < Spinach::FeatureSteps
   end
 
   step 'I click the "Snippets" tab' do
-    click_link('Snippets')
-  end
-
-  step 'I click the "Edit" tab' do
-    page.within '.sidebar-subnav' do
-      click_link('Project Settings')
+    page.within('.layout-nav') do
+      click_link('Snippets')
     end
   end
 
-  step 'I click the "Hooks" tab' do
-    click_link('Web Hooks')
+  step 'I click the "Edit Project"' do
+    page.within '.nav-sidebar' do
+      click_link('Edit Project')
+    end
   end
 
-  step 'I click the "Deploy Keys" tab' do
-    click_link('Deploy Keys')
+  step 'I click the "Integrations" tab' do
+    page.within '.nav-sidebar' do
+      click_link('Integrations')
+    end
   end
 
-  step 'the active sub nav should be Team' do
-    ensure_active_sub_nav('Members')
+  step 'I click the "Repository" tab' do
+    page.within '.sidebar-top-level-items > .active' do
+      click_link('Repository')
+    end
   end
 
-  step 'the active sub nav should be Edit' do
-    ensure_active_sub_nav('Project')
+  step 'I click the "Activity" tab' do
+    page.within '.sidebar-top-level-items > .active' do
+      click_link('Activity')
+    end
   end
 
-  step 'the active sub nav should be Hooks' do
-    ensure_active_sub_nav('Web Hooks')
+  step 'the active sub tab should be Members' do
+    ensure_active_sub_tab('Members')
   end
 
-  step 'the active sub nav should be Deploy Keys' do
-    ensure_active_sub_nav('Deploy Keys')
+  step 'the active sub tab should be Integrations' do
+    ensure_active_sub_tab('Integrations')
+  end
+
+  step 'the active sub tab should be Repository' do
+    ensure_active_sub_tab('Repository')
+  end
+
+  step 'the active sub tab should be Pages' do
+    ensure_active_sub_tab('Pages')
+  end
+
+  step 'the active sub tab should be Activity' do
+    ensure_active_sub_tab('Activity')
   end
 
   # Sub Tabs: Commits
@@ -56,15 +72,19 @@ class Spinach::Features::ProjectActiveTab < Spinach::FeatureSteps
   end
 
   step 'I click the "Branches" tab' do
-    click_link('Branches')
+    page.within '.nav-sidebar' do
+      click_link('Branches')
+    end
   end
 
   step 'I click the "Tags" tab' do
     click_link('Tags')
   end
 
-  step 'the active sub tab should be Commits' do
-    ensure_active_sub_tab('Commits')
+  step 'I click the "Charts" tab' do
+    page.within('.sidebar-top-level-items > .active') do
+      click_link('Charts')
+    end
   end
 
   step 'the active sub tab should be Compare' do
@@ -81,23 +101,27 @@ class Spinach::Features::ProjectActiveTab < Spinach::FeatureSteps
 
   # Sub Tabs: Issues
 
-  step 'I click the "Milestones" tab' do
-    click_link('Milestones')
+  step 'I click the "Milestones" sub tab' do
+    page.within('.nav-sidebar') do
+      click_link('Milestones')
+    end
   end
 
-  step 'I click the "Labels" tab' do
-    click_link('Labels')
+  step 'I click the "Labels" sub tab' do
+    page.within('.nav-sidebar') do
+      click_link('Labels')
+    end
   end
 
   step 'the active sub tab should be Issues' do
     ensure_active_sub_tab('Issues')
   end
 
-  step 'the active main tab should be Milestones' do
-    ensure_active_main_tab('Milestones')
+  step 'the active sub tab should be Milestones' do
+    ensure_active_sub_tab('Milestones')
   end
 
-  step 'the active main tab should be Labels' do
-    ensure_active_main_tab('Labels')
+  step 'the active sub tab should be Labels' do
+    ensure_active_sub_tab('Labels')
   end
 end

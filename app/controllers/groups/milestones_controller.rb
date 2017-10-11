@@ -1,12 +1,20 @@
 class Groups::MilestonesController < Groups::ApplicationController
-  include GlobalMilestones
+  include MilestoneActions
 
-  before_action :projects
-  before_action :milestones, only: [:index]
-  before_action :milestone, only: [:show, :update]
-  before_action :authorize_group_milestone!, only: [:create, :update]
+  before_action :group_projects
+  before_action :milestone, only: [:edit, :show, :update, :merge_requests, :participants, :labels]
+  before_action :authorize_admin_milestones!, only: [:edit, :new, :create, :update]
 
   def index
+    respond_to do |format|
+      format.html do
+        @milestone_states = GlobalMilestone.states_count(group_projects, group)
+        @milestones = Kaminari.paginate_array(milestones).page(params[:page])
+      end
+      format.json do
+        render json: milestones.map { |m| m.for_display.slice(:title, :name) }
+      end
+    end
   end
 
   def new
@@ -14,42 +22,75 @@ class Groups::MilestonesController < Groups::ApplicationController
   end
 
   def create
-    project_ids = params[:milestone][:project_ids]
-    title = milestone_params[:title]
+    @milestone = Milestones::CreateService.new(group, current_user, milestone_params).execute
 
-    @group.projects.where(id: project_ids).each do |project|
-      Milestones::CreateService.new(project, current_user, milestone_params).execute
+    if @milestone.persisted?
+      redirect_to milestone_path
+    else
+      render "new"
     end
-
-    redirect_to milestone_path(title)
   end
 
   def show
   end
 
+  def edit
+    render_404 if @milestone.legacy_group_milestone?
+  end
+
   def update
-    @milestone.milestones.each do |milestone|
-      Milestones::UpdateService.new(milestone.project, current_user, milestone_params).execute(milestone)
+    # Keep this compatible with legacy group milestones where we have to update
+    # all projects milestones states at once.
+    if @milestone.legacy_group_milestone?
+      update_params = milestone_params.select { |key| key == "state_event" }
+      milestones = @milestone.milestones
+    else
+      update_params = milestone_params
+      milestones = [@milestone]
     end
 
-    redirect_back_or_default(default: milestone_path(@milestone.title))
+    milestones.each do |milestone|
+      Milestones::UpdateService.new(milestone.parent, current_user, update_params).execute(milestone)
+    end
+
+    redirect_to milestone_path
   end
 
   private
 
-  def authorize_group_milestone!
+  def authorize_admin_milestones!
     return render_404 unless can?(current_user, :admin_milestones, group)
   end
 
   def milestone_params
-    params.require(:milestone).permit(:title, :description, :due_date, :state_event)
+    params.require(:milestone).permit(:title, :description, :start_date, :due_date, :state_event)
   end
 
-  def milestone_path(title)
-    group_milestone_path(@group, title.parameterize, title: title)
+  def milestone_path
+    if @milestone.legacy_group_milestone?
+      group_milestone_path(group, @milestone.safe_title, title: @milestone.title)
+    else
+      group_milestone_path(group, @milestone.iid)
+    end
   end
 
-  def projects
-    @projects ||= @group.projects
+  def milestones
+    search_params = params.merge(group_ids: group.id)
+
+    milestones = MilestonesFinder.new(search_params).execute
+    legacy_milestones = GroupMilestone.build_collection(group, group_projects, params)
+
+    milestones + legacy_milestones
+  end
+
+  def milestone
+    @milestone =
+      if params[:title]
+        GroupMilestone.build(group, group_projects, params[:title])
+      else
+        group.milestones.find_by_iid(params[:id])
+      end
+
+    render_404 unless @milestone
   end
 end

@@ -5,12 +5,48 @@ class Admin::ApplicationSettingsController < Admin::ApplicationController
   end
 
   def update
-    if @application_setting.update_attributes(application_setting_params)
+    successful = ApplicationSettings::UpdateService
+      .new(@application_setting, current_user, application_setting_params)
+      .execute
+
+    if successful
       redirect_to admin_application_settings_path,
         notice: 'Application settings saved successfully'
     else
       render :show
     end
+  end
+
+  def usage_data
+    respond_to do |format|
+      format.html do
+        usage_data_json = JSON.pretty_generate(Gitlab::UsageData.data)
+
+        render html: Gitlab::Highlight.highlight('payload.json', usage_data_json)
+      end
+      format.json { render json: Gitlab::UsageData.to_json }
+    end
+  end
+
+  def reset_runners_token
+    @application_setting.reset_runners_registration_token!
+    flash[:notice] = 'New runners registration token has been generated!'
+    redirect_to admin_runners_path
+  end
+
+  def reset_health_check_token
+    @application_setting.reset_health_check_access_token!
+    flash[:notice] = 'New health check access token has been generated!'
+    redirect_to :back
+  end
+
+  def clear_repository_check_states
+    RepositoryCheck::ClearWorker.perform_async
+
+    redirect_to(
+      admin_application_settings_path,
+      notice: 'Started asynchronous removal of all repository check states.'
+    )
   end
 
   private
@@ -20,15 +56,6 @@ class Admin::ApplicationSettingsController < Admin::ApplicationController
   end
 
   def application_setting_params
-    restricted_levels = params[:application_setting][:restricted_visibility_levels]
-    if restricted_levels.nil?
-      params[:application_setting][:restricted_visibility_levels] = []
-    else
-      restricted_levels.map! do |level|
-        level.to_i
-      end
-    end
-
     import_sources = params[:application_setting][:import_sources]
     if import_sources.nil?
       params[:application_setting][:import_sources] = []
@@ -38,29 +65,28 @@ class Admin::ApplicationSettingsController < Admin::ApplicationController
       end
     end
 
+    enabled_oauth_sign_in_sources = params[:application_setting].delete(:enabled_oauth_sign_in_sources)
+
+    params[:application_setting][:disabled_oauth_sign_in_sources] =
+      AuthHelper.button_based_providers.map(&:to_s) -
+      Array(enabled_oauth_sign_in_sources)
+
+    params[:application_setting][:restricted_visibility_levels]&.delete("")
+    params.delete(:domain_blacklist_raw) if params[:domain_blacklist_file]
+
     params.require(:application_setting).permit(
-      :default_projects_limit,
-      :default_branch_protection,
-      :signup_enabled,
-      :signin_enabled,
-      :gravatar_enabled,
-      :twitter_sharing_enabled,
-      :sign_in_text,
-      :help_page_text,
-      :home_page_url,
-      :after_sign_out_path,
-      :max_attachment_size,
-      :session_expire_delay,
-      :default_project_visibility,
-      :default_snippet_visibility,
-      :restricted_signup_domains_raw,
-      :version_check_enabled,
-      :admin_notification_email,
-      :user_oauth_applications,
-      :shared_runners_enabled,
-      :max_artifacts_size,
-      restricted_visibility_levels: [],
-      import_sources: []
+      visible_application_setting_attributes
     )
+  end
+
+  def visible_application_setting_attributes
+    ApplicationSettingsHelper.visible_attributes + [
+      :domain_blacklist_file,
+      disabled_oauth_sign_in_sources: [],
+      import_sources: [],
+      repository_storages: [],
+      restricted_visibility_levels: [],
+      sidekiq_throttling_queues: []
+    ]
   end
 end

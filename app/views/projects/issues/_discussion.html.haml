@@ -1,38 +1,17 @@
+- @gfm_form = true
+
 - content_for :note_actions do
   - if can?(current_user, :update_issue, @issue)
-    - if @issue.closed?
-      = link_to 'Reopen Issue', issue_path(@issue, issue: {state_event: :reopen}, status_only: true), method: :put, class: 'btn btn-grouped btn-reopen js-note-target-reopen', title: 'Reopen Issue'
-    - else
-      = link_to 'Close Issue', issue_path(@issue, issue: {state_event: :close}, status_only: true), method: :put, class: 'btn btn-grouped btn-close js-note-target-close', title: 'Close Issue'
+    = link_to 'Reopen issue', issue_path(@issue, issue: {state_event: :reopen}, format: 'json'), data: {original_text: "Reopen issue", alternative_text: "Comment & reopen issue"}, class: "btn btn-nr btn-reopen btn-comment js-note-target-reopen #{issue_button_visibility(@issue, false)}", title: 'Reopen issue'
+    = link_to 'Close issue', issue_path(@issue, issue: {state_event: :close}, format: 'json'), data: {original_text: "Close issue", alternative_text: "Comment & close issue"}, class: "btn btn-nr btn-close btn-comment js-note-target-close #{issue_button_visibility(@issue, true)}", title: 'Close issue'
 
-= render 'shared/show_aside'
-
-.gray-content-block.second-block
-  .row
-    .col-md-9
-      .votes-holder.pull-right
-        #votes= render 'votes/votes_block', votable: @issue
-      .participants
-        %span= pluralize(@participants.count, 'participant')
-        - @participants.each do |participant|
-          = link_to_member(@project, participant, name: false, size: 24)
-    .col-md-3
-      .input-group.cross-project-reference
-        %span.slead.has_tooltip{title: 'Cross-project reference'}
-          = cross_project_reference(@project, @issue)
-        = clipboard_button
-
-.row
-  %section.col-md-9
-    .voting_notes#notes= render 'projects/notes/notes_with_form'
-  %aside.col-md-3
-    .issuable-affix
-      .context
-        = render 'shared/issuable/context', issuable: @issue
-
-      - if @issue.labels.any?
-        .issuable-context-title
-          %label Labels
-        .issue-show-labels
-          - @issue.labels.each do |label|
-            = link_to_label(label)
+%section.js-vue-notes-event
+  #js-vue-notes{ data: { discussions_path: discussions_project_issue_path(@project, @issue, format: :json),
+  register_path: new_session_path(:user, redirect_to_referer: 'yes', anchor: 'register-pane'),
+  new_session_path: new_session_path(:user, redirect_to_referer: 'yes'),
+  markdown_docs_path: help_page_path('user/markdown'),
+  quick_actions_docs_path: help_page_path('user/project/quick_actions'),
+  notes_path: notes_url,
+  last_fetched_at: Time.now.to_i,
+  issue_data: serialize_issuable(@issue),
+  current_user_data: UserSerializer.new.represent(current_user).to_json } }

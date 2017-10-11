@@ -37,7 +37,7 @@ module ApplicationHelper
       if project_id.is_a?(Project)
         project_id
       else
-        Project.find_with_namespace(project_id)
+        Project.find_by_full_path(project_id)
       end
 
     if project.avatar_url
@@ -61,29 +61,30 @@ module ApplicationHelper
     options[:class] ||= ''
     options[:class] << ' identicon'
     bg_key = project.id % 7
-    style = "background-color: ##{ allowed_colors.values[bg_key] }; color: #555"
+    style = "background-color: ##{allowed_colors.values[bg_key]}; color: #555"
 
     content_tag(:div, class: options[:class], style: style) do
       project.name[0, 1].upcase
     end
   end
 
-  def avatar_icon(user_or_email = nil, size = nil)
-    if user_or_email.is_a?(User)
-      user = user_or_email
-    else
-      user = User.find_by(email: user_or_email)
-    end
+  def avatar_icon(user_or_email = nil, size = nil, scale = 2, only_path: true)
+    user =
+      if user_or_email.is_a?(User)
+        user_or_email
+      else
+        User.find_by_any_email(user_or_email.try(:downcase))
+      end
 
     if user
-      user.avatar_url(size) || default_avatar
+      user.avatar_url(size: size, only_path: only_path) || default_avatar
     else
-      gravatar_icon(user_or_email, size)
+      gravatar_icon(user_or_email, size, scale)
     end
   end
 
-  def gravatar_icon(user_email = '', size = nil)
-    GravatarService.new.execute(user_email, size) ||
+  def gravatar_icon(user_email = '', size = nil, scale = 2)
+    GravatarService.new.execute(user_email, size, scale) ||
       default_avatar
   end
 
@@ -101,29 +102,6 @@ module ApplicationHelper
     'Never'
   end
 
-  def grouped_options_refs
-    repository = @project.repository
-
-    options = [
-      ['Branches', repository.branch_names],
-      ['Tags', VersionSorter.rsort(repository.tag_names)]
-    ]
-
-    # If reference is commit id - we should add it to branch/tag selectbox
-    if(@ref && !options.flatten.include?(@ref) &&
-       @ref =~ /\A[0-9a-zA-Z]{6,52}\z/)
-      options << ['Commit', [@ref]]
-    end
-
-    grouped_options_for_select(options, @ref || @project.default_branch)
-  end
-
-  def emoji_autocomplete_source
-    # should be an array of strings
-    # so to_s can be called, because it is sufficient and to_json is too slow
-    Emoji.names.to_s
-  end
-
   # Define whenever show last push event
   # with suggestion to create MR
   def show_last_push_widget?(event)
@@ -133,13 +111,13 @@ module ApplicationHelper
     project = event.project
 
     # Skip if project repo is empty or MR disabled
-    return false unless project && !project.empty_repo? && project.merge_requests_enabled
+    return false unless project && !project.empty_repo? && project.feature_available?(:merge_requests, current_user)
 
     # Skip if user already created appropriate MR
     return false if project.merge_requests.where(source_branch: event.branch_name).opened.any?
 
     # Skip if user removed branch right after that
-    return false unless project.repository.branch_names.include?(event.branch_name)
+    return false unless project.repository.branch_exists?(event.branch_name)
 
     true
   end
@@ -153,10 +131,7 @@ module ApplicationHelper
   end
 
   def body_data_page
-    path = controller.controller_path.split('/')
-    namespace = path.first if path.second
-
-    [namespace, controller.controller_name, controller.action_name].compact.join(':')
+    [*controller.controller_path.split('/'), controller.action_name].compact.join(':')
   end
 
   # shortcut for gitlab config
@@ -169,28 +144,11 @@ module ApplicationHelper
     Gitlab.config.extra
   end
 
-  def search_placeholder
-    if @project && @project.persisted?
-      'Search in this project'
-    elsif @snippet || @snippets || @show_snippets
-      'Search snippets'
-    elsif @group && @group.persisted?
-      'Search in this group'
-    else
-      'Search'
-    end
-  end
-
-  def broadcast_message
-    BroadcastMessage.current
-  end
-
   # Render a `time` element with Javascript-based relative date and tooltip
   #
   # time       - Time object
   # placement  - Tooltip placement String (default: "top")
   # html_class - Custom class for `time` element (default: "time_ago")
-  # skip_js    - When true, exclude the `script` tag (default: false)
   #
   # By default also includes a `script` element with Javascript necessary to
   # initialize the `timeago` jQuery extension. If this method is called many
@@ -202,49 +160,37 @@ module ApplicationHelper
   # `html_class` argument is provided.
   #
   # Returns an HTML-safe String
-  def time_ago_with_tooltip(time, placement: 'top', html_class: 'time_ago', skip_js: false)
-    element = content_tag :time, time.to_s,
-      class: "#{html_class} js-timeago",
-      datetime: time.getutc.iso8601,
-      title: time.in_time_zone.stamp('Aug 21, 2011 9:23pm'),
-      data: { toggle: 'tooltip', placement: placement, container: 'body' }
+  def time_ago_with_tooltip(time, placement: 'top', html_class: '', short_format: false)
+    css_classes = short_format ? 'js-short-timeago' : 'js-timeago'
+    css_classes << " #{html_class}" unless html_class.blank?
 
-    element += javascript_tag "$('.js-timeago').timeago()" unless skip_js
+    element = content_tag :time, l(time, format: "%b %d, %Y"),
+      class: css_classes,
+      title: l(time.to_time.in_time_zone, format: :timeago_tooltip),
+      datetime: time.to_time.getutc.iso8601,
+      data: {
+        toggle: 'tooltip',
+        placement: placement,
+        container: 'body'
+      }
 
     element
   end
 
-  def render_markup(file_name, file_content)
-    if gitlab_markdown?(file_name)
-      Haml::Helpers.preserve(markdown(file_content))
-    elsif asciidoc?(file_name)
-      asciidoc(file_content)
-    elsif plain?(file_name)
-      content_tag :pre, class: 'plain-readme' do
-        file_content
+  def edited_time_ago_with_tooltip(object, placement: 'top', html_class: 'time_ago', exclude_author: false)
+    return unless object.edited?
+
+    content_tag :small, class: 'edited-text' do
+      output = content_tag(:span, 'Edited ')
+      output << time_ago_with_tooltip(object.last_edited_at, placement: placement, html_class: html_class)
+
+      if !exclude_author && object.last_edited_by
+        output << content_tag(:span, ' by ')
+        output << link_to_member(object.project, object.last_edited_by, avatar: false, author_class: nil)
       end
-    else
-      GitHub::Markup.render(file_name, file_content).
-        force_encoding(file_content.encoding).html_safe
+
+      output
     end
-  rescue RuntimeError
-    simple_format(file_content)
-  end
-
-  def plain?(filename)
-    Gitlab::MarkupHelper.plain?(filename)
-  end
-
-  def markup?(filename)
-    Gitlab::MarkupHelper.markup?(filename)
-  end
-
-  def gitlab_markdown?(filename)
-    Gitlab::MarkupHelper.gitlab_markdown?(filename)
-  end
-
-  def asciidoc?(filename)
-    Gitlab::MarkupHelper.asciidoc?(filename)
   end
 
   def promo_host
@@ -255,17 +201,24 @@ module ApplicationHelper
     'https://' + promo_host
   end
 
+  def support_url
+    Gitlab::CurrentSettings.current_application_settings.help_page_support_url.presence || promo_url + '/getting-help/'
+  end
+
   def page_filter_path(options = {})
     without = options.delete(:without)
+    add_label = options.delete(:label)
 
     exist_opts = {
       state: params[:state],
       scope: params[:scope],
-      label_name: params[:label_name],
-      milestone_id: params[:milestone_id],
+      milestone_title: params[:milestone_title],
       assignee_id: params[:assignee_id],
+      assignee_username: params[:assignee_username],
       author_id: params[:author_id],
-      sort: params[:sort],
+      author_username: params[:author_username],
+      search: params[:search],
+      label_name: params[:label_name]
     }
 
     options = exist_opts.merge(options)
@@ -276,9 +229,11 @@ module ApplicationHelper
       end
     end
 
-    path = request.path
-    path << "?#{options.to_param}"
-    path
+    params = options.compact
+
+    params.delete(:label_name) unless add_label
+
+    "#{request.path}?#{params.to_param}"
   end
 
   def outdated_browser?
@@ -293,33 +248,65 @@ module ApplicationHelper
     end
   end
 
-  def state_filters_text_for(entity, project)
-    titles = {
-      opened: "Open"
-    }
-
-    entity_title = titles[entity] || entity.to_s.humanize
-
-    count =
-      if project.nil?
-        nil
-      elsif current_controller?(:issues)
-        project.issues.send(entity).count
-      elsif current_controller?(:merge_requests)
-        project.merge_requests.send(entity).count
-      end
-
-    html = content_tag :span, entity_title
-
-    if count.present?
-      html += " "
-      html += content_tag :span, number_with_delimiter(count), class: 'badge'
-    end
-
-    html.html_safe
-  end
-
   def truncate_first_line(message, length = 50)
     truncate(message.each_line.first.chomp, length: length) if message
+  end
+
+  # While similarly named to Rails's `link_to_if`, this method behaves quite differently.
+  # If `condition` is truthy, a link will be returned with the result of the block
+  # as its body. If `condition` is falsy, only the result of the block will be returned.
+  def conditional_link_to(condition, options, html_options = {}, &block)
+    if condition
+      link_to options, html_options, &block
+    else
+      capture(&block)
+    end
+  end
+
+  def page_class
+    class_names = []
+    class_names << 'issue-boards-page' if current_controller?(:boards)
+    class_names << 'with-performance-bar' if performance_bar_enabled?
+
+    class_names
+  end
+
+  # Returns active css class when condition returns true
+  # otherwise returns nil.
+  #
+  # Example:
+  #   %li{ class: active_when(params[:filter] == '1') }
+  def active_when(condition)
+    'active' if condition
+  end
+
+  def show_callout?(name)
+    cookies[name] != 'true'
+  end
+
+  def linkedin_url(user)
+    name = user.linkedin
+    if name =~ %r{\Ahttps?:\/\/(www\.)?linkedin\.com\/in\/}
+      name
+    else
+      "https://www.linkedin.com/in/#{name}"
+    end
+  end
+
+  def twitter_url(user)
+    name = user.twitter
+    if name =~ %r{\Ahttps?:\/\/(www\.)?twitter\.com\/}
+      name
+    else
+      "https://www.twitter.com/#{name}"
+    end
+  end
+
+  def collapsed_sidebar?
+    cookies["sidebar_collapsed"] == "true"
+  end
+
+  def show_new_repo?
+    cookies["new_repo"] == "true" && body_data_page != 'projects:show'
   end
 end

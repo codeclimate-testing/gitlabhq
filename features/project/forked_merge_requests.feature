@@ -4,6 +4,7 @@ Feature: Project Forked Merge Requests
     And I am a member of project "Shop"
     And I have a project forked off of "Shop" called "Forked Shop"
 
+  @javascript
   Scenario: I submit new unassigned merge request to a forked project
     Given I visit project "Forked Shop" merge requests page
     And I click link "New Merge Request"
@@ -40,8 +41,7 @@ Feature: Project Forked Merge Requests
 
   @javascript
   Scenario: I see the users in the target project for a new merge request
-    Given I logout
-    And I sign in as an admin
+    Given I sign in as an admin
     And I have a project forked off of "Shop" called "Forked Shop"
     Then I visit project "Forked Shop" merge requests page
     And I click link "New Merge Request"

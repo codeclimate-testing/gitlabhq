@@ -1,44 +1,28 @@
 namespace :gitlab do
   namespace :shell do
     desc "GitLab | Install or upgrade gitlab-shell"
-    task :install, [:tag, :repo] => :environment do |t, args|
+    task :install, [:repo] => :environment do |t, args|
       warn_user_is_not_gitlab
 
       default_version = Gitlab::Shell.version_required
-      args.with_defaults(tag: 'v' + default_version, repo: "https://gitlab.com/gitlab-org/gitlab-shell.git")
+      args.with_defaults(repo: 'https://gitlab.com/gitlab-org/gitlab-shell.git')
 
-      user = Gitlab.config.gitlab.user
-      home_dir = Rails.env.test? ? Rails.root.join('tmp/tests') : Gitlab.config.gitlab.user_home
       gitlab_url = Gitlab.config.gitlab.url
       # gitlab-shell requires a / at the end of the url
       gitlab_url += '/' unless gitlab_url.end_with?('/')
-      repos_path = Gitlab.config.gitlab_shell.repos_path
       target_dir = Gitlab.config.gitlab_shell.path
 
-      # Clone if needed
-      unless File.directory?(target_dir)
-        system(*%W(#{Gitlab.config.git.bin_path} clone -- #{args.repo} #{target_dir}))
-      end
+      checkout_or_clone_version(version: default_version, repo: args.repo, target_dir: target_dir)
 
       # Make sure we're on the right tag
       Dir.chdir(target_dir) do
-        # First try to checkout without fetching
-        # to avoid stalling tests if the Internet is down.
-        reseted = reset_to_commit(args)
-
-        unless reseted
-          system(*%W(#{Gitlab.config.git.bin_path} fetch origin))
-          reset_to_commit(args)
-        end
-
         config = {
-          user: user,
+          user: Gitlab.config.gitlab.user,
           gitlab_url: gitlab_url,
-          http_settings: {self_signed_cert: false}.stringify_keys,
-          repos_path: repos_path,
-          auth_file: File.join(home_dir, ".ssh", "authorized_keys"),
+          http_settings: { self_signed_cert: false }.stringify_keys,
+          auth_file: File.join(user_home, ".ssh", "authorized_keys"),
           redis: {
-            bin: %x{which redis-cli}.chomp,
+            bin: `which redis-cli`.chomp,
             namespace: "resque:gitlab"
           }.stringify_keys,
           log_level: "INFO",
@@ -57,12 +41,18 @@ namespace :gitlab do
         # Generate config.yml based on existing gitlab settings
         File.open("config.yml", "w+") {|f| f.puts config.to_yaml}
 
-        # Launch installation process
-        system(*%W(bin/install))
-
-        # (Re)create hooks
-        system(*%W(bin/create-hooks))
+        [
+          %w(bin/install) + repository_storage_paths_args,
+          %w(bin/compile)
+        ].each do |cmd|
+          unless Kernel.system(*cmd)
+            raise "command failed: #{cmd.join(' ')}"
+          end
+        end
       end
+
+      # (Re)create hooks
+      Rake::Task['gitlab:shell:create_hooks'].invoke
 
       # Required for debian packaging with PKGR: Setup .ssh/environment with
       # the current PATH, so that the correct ruby version gets loaded
@@ -70,9 +60,11 @@ namespace :gitlab do
       # be an issue since it is more than likely that there are no "normal"
       # user accounts on a gitlab server). The alternative is for the admin to
       # install a ruby (1.9.3+) in the global path.
-      File.open(File.join(home_dir, ".ssh", "environment"), "w+") do |f|
+      File.open(File.join(user_home, ".ssh", "environment"), "w+") do |f|
         f.puts "PATH=#{ENV['PATH']}"
       end
+
+      Gitlab::Shell.ensure_secret_token!
     end
 
     desc "GitLab | Setup gitlab-shell"
@@ -84,16 +76,26 @@ namespace :gitlab do
     task build_missing_projects: :environment do
       Project.find_each(batch_size: 1000) do |project|
         path_to_repo = project.repository.path_to_repo
-        if File.exists?(path_to_repo)
+        if File.exist?(path_to_repo)
           print '-'
         else
-          if Gitlab::Shell.new.add_repository(project.path_with_namespace)
+          if Gitlab::Shell.new.add_repository(project.repository_storage,
+                                              project.disk_path)
             print '.'
           else
             print 'F'
           end
         end
       end
+    end
+
+    desc 'Create or repair repository hooks symlink'
+    task create_hooks: :environment do
+      warn_user_is_not_gitlab
+
+      puts 'Creating/Repairing hooks symlinks for all repositories'
+      system(*%W(#{Gitlab.config.gitlab_shell.path}/bin/create-hooks) + repository_storage_paths_args)
+      puts 'done'.color(:green)
     end
   end
 
@@ -118,24 +120,12 @@ namespace :gitlab do
     puts ""
 
     unless $?.success?
-      puts "Failed to add keys...".red
+      puts "Failed to add keys...".color(:red)
       exit 1
     end
 
   rescue Gitlab::TaskAbortedByUserError
-    puts "Quitting...".red
+    puts "Quitting...".color(:red)
     exit 1
   end
-
-  def reset_to_commit(args)
-    tag, status = Gitlab::Popen.popen(%W(#{Gitlab.config.git.bin_path} describe -- #{args.tag}))
-
-    unless status.zero?
-      tag, status = Gitlab::Popen.popen(%W(#{Gitlab.config.git.bin_path} describe -- origin/#{args.tag}))
-    end
-
-    tag = tag.strip
-    system(*%W(#{Gitlab.config.git.bin_path} reset --hard #{tag}))
-  end
 end
-

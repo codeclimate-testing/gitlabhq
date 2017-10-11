@@ -1,24 +1,25 @@
+# :nocov:
+module DeliverNever
+  def deliver_later
+    self
+  end
+end
+
 module Gitlab
   class Seeder
     def self.quiet
       mute_mailer
       SeedFu.quiet = true
-      yield
-      SeedFu.quiet = false
-      puts "\nOK".green
-    end
 
-    def self.by_user(user)
       yield
+
+      SeedFu.quiet = false
+      puts "\nOK".color(:green)
     end
 
     def self.mute_mailer
-      code = <<-eos
-def Notify.delay
-  self
-end
-      eos
-      eval(code)
+      ActionMailer::MessageDelivery.prepend(DeliverNever)
     end
   end
 end
+# :nocov:

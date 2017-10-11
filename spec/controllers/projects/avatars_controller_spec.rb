@@ -6,11 +6,11 @@ describe Projects::AvatarsController do
 
   before do
     sign_in(user)
-    project.team << [user, :developer]
+    project.team << [user, :master]
     controller.instance_variable_set(:@project, project)
   end
 
-  it 'destroy should remove avatar from DB' do
+  it 'removes avatar from DB by calling destroy' do
     delete :destroy, namespace_id: project.namespace.id, project_id: project.id
     expect(project.avatar.present?).to be_falsey
     expect(project).to be_valid

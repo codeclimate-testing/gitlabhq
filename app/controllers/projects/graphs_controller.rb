@@ -5,7 +5,6 @@ class Projects::GraphsController < Projects::ApplicationController
   before_action :require_non_empty_project
   before_action :assign_ref_vars
   before_action :authorize_download_code!
-  before_action :ci_enabled, only: :ci
 
   def show
     respond_to do |format|
@@ -17,27 +16,38 @@ class Projects::GraphsController < Projects::ApplicationController
   end
 
   def commits
-    @commits = @project.repository.commits(@ref, nil, 2000, 0, true)
+    redirect_to action: 'charts'
+  end
+
+  def languages
+    redirect_to action: 'charts'
+  end
+
+  def charts
+    get_commits
+    get_languages
+  end
+
+  def ci
+    redirect_to charts_project_pipelines_path(@project)
+  end
+
+  private
+
+  def get_commits
+    @commits = @project.repository.commits(@ref, limit: 2000, skip_merges: true)
     @commits_graph = Gitlab::Graphs::Commits.new(@commits)
     @commits_per_week_days = @commits_graph.commits_per_week_days
     @commits_per_time = @commits_graph.commits_per_time
     @commits_per_month = @commits_graph.commits_per_month
   end
 
-  def ci
-    ci_project = @project.gitlab_ci_project
-
-    @charts = {}
-    @charts[:week] = Ci::Charts::WeekChart.new(ci_project)
-    @charts[:month] = Ci::Charts::MonthChart.new(ci_project)
-    @charts[:year] = Ci::Charts::YearChart.new(ci_project)
-    @charts[:build_times] = Ci::Charts::BuildTime.new(ci_project)
+  def get_languages
+    @languages = @project.repository.languages
   end
 
-  private
-
   def fetch_graph
-    @commits = @project.repository.commits(@ref, nil, 6000, 0, true)
+    @commits = @project.repository.commits(@ref, limit: 6000, skip_merges: true)
     @log = []
 
     @commits.each do |commit|

@@ -1,10 +1,15 @@
+- @breadcrumb_link = dashboard_groups_path
+- breadcrumb_title "Groups"
+- @hide_top_links = true
 - page_title    'New Group'
-- header_title  'New Group'
-= form_for @group, html: { class: 'group-form form-horizontal' } do |f|
-  - if @group.errors.any?
-    .alert.alert-danger
-      %span= @group.errors.full_messages.first
+- header_title  "Groups", dashboard_groups_path
 
+%h3.page-title
+  New Group
+%hr
+
+= form_for @group, html: { class: 'group-form form-horizontal gl-show-field-errors' } do |f|
+  = form_errors(@group)
   = render 'shared/group_form', f: f, autofocus: true
 
   .form-group.group-description-holder
@@ -12,9 +17,14 @@
     .col-sm-10
       = render 'shared/choose_group_avatar_button', f: f
 
+  = render 'shared/visibility_level', f: f, visibility_level: default_group_visibility, can_change_visibility_level: true, form_model: @group
+
+  = render 'create_chat_team', f: f if Gitlab.config.mattermost.enabled
+
   .form-group
     .col-sm-offset-2.col-sm-10
       = render 'shared/group_tips'
 
   .form-actions
-    = f.submit 'Create group', class: "btn btn-create", tabindex: 3
+    = f.submit 'Create group', class: "btn btn-create"
+    = link_to 'Cancel', dashboard_groups_path, class: 'btn btn-cancel'

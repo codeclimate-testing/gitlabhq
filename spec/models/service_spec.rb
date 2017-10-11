@@ -1,80 +1,65 @@
-# == Schema Information
-#
-# Table name: services
-#
-#  id                    :integer          not null, primary key
-#  type                  :string(255)
-#  title                 :string(255)
-#  project_id            :integer
-#  created_at            :datetime
-#  updated_at            :datetime
-#  active                :boolean          default(FALSE), not null
-#  properties            :text
-#  template              :boolean          default(FALSE)
-#  push_events           :boolean          default(TRUE)
-#  issues_events         :boolean          default(TRUE)
-#  merge_requests_events :boolean          default(TRUE)
-#  tag_push_events       :boolean          default(TRUE)
-#  note_events           :boolean          default(TRUE), not null
-#
-
 require 'spec_helper'
 
 describe Service do
-
   describe "Associations" do
     it { is_expected.to belong_to :project }
     it { is_expected.to have_one :service_hook }
   end
 
-  describe "Mass assignment" do
+  describe 'Validations' do
+    it { is_expected.to validate_presence_of(:type) }
   end
 
   describe "Test Button" do
-    before do
-      @service = Service.new
-    end
+    describe '#can_test?' do
+      let(:service) { create(:service, project: project) }
 
-    describe "Testable" do
-      let(:project) { create :project }
+      context 'when repository is not empty' do
+        let(:project) { create(:project, :repository) }
 
-      before do
-        allow(@service).to receive(:project).and_return(project)
-        @testable = @service.can_test?
+        it 'returns true' do
+          expect(service.can_test?).to be true
+        end
       end
 
-      describe :can_test do
-        it { expect(@testable).to eq(true) }
-      end
+      context 'when repository is empty' do
+        let(:project) { create(:project) }
 
-      describe :test do
-        let(:data) { 'test' }
-
-        it 'test runs execute' do
-          expect(@service).to receive(:execute).with(data)
-
-          @service.test(data)
+        it 'returns true' do
+          expect(service.can_test?).to be true
         end
       end
     end
 
-    describe "With commits" do
-      let(:project) { create :project }
+    describe '#test' do
+      let(:data) { 'test' }
+      let(:service) { create(:service, project: project) }
 
-      before do
-        allow(@service).to receive(:project).and_return(project)
-        @testable = @service.can_test?
+      context 'when repository is not empty' do
+        let(:project) { create(:project, :repository) }
+
+        it 'test runs execute' do
+          expect(service).to receive(:execute).with(data)
+
+          service.test(data)
+        end
       end
 
-      describe :can_test do
-        it { expect(@testable).to eq(true) }
+      context 'when repository is empty' do
+        let(:project) { create(:project) }
+
+        it 'test runs execute' do
+          expect(service).to receive(:execute).with(data)
+
+          service.test(data)
+        end
       end
     end
   end
 
   describe "Template" do
     describe "for pushover service" do
-      let(:service_template) do
+      let!(:service_template) do
         PushoverService.create(
           template: true,
           properties: {
@@ -86,14 +71,10 @@ describe Service do
       end
       let(:project) { create(:project) }
 
-      describe 'should be prefilled for projects pushover service' do
-        before do
-          service_template
-          project.build_missing_services
-        end
+      describe 'is prefilled for projects pushover service' do
+        it "has all fields prefilled" do
+          service = project.find_or_initialize_service('pushover')
 
-        it "should have all fields prefilled" do
-          service = project.pushover_service
           expect(service.template).to eq(false)
           expect(service.device).to eq('MyDevice')
           expect(service.sound).to eq('mic')
@@ -196,7 +177,6 @@ describe Service do
       )
     end
 
-
     it "returns nil when the property has not been assigned a new value" do
       service.username = "key_changed"
       expect(service.bamboo_url_was).to be_nil
@@ -222,6 +202,56 @@ describe Service do
       service.bamboo_url = 'http://example.com'
       service.save
       expect(service.bamboo_url_was).to be_nil
+    end
+  end
+
+  describe 'initialize service with no properties' do
+    let(:service) do
+      GitlabIssueTrackerService.create(
+        project: create(:project),
+        title: 'random title'
+      )
+    end
+
+    it 'does not raise error' do
+      expect { service }.not_to raise_error
+    end
+
+    it 'creates the properties' do
+      expect(service.properties).to eq({ "title" => "random title" })
+    end
+  end
+
+  describe "callbacks" do
+    let(:project) { create(:project) }
+    let!(:service) do
+      RedmineService.new(
+        project: project,
+        active: true,
+        properties: {
+          project_url: 'http://redmine/projects/project_name_in_redmine',
+          issues_url: "http://redmine/#{project.id}/project_name_in_redmine/:id",
+          new_issue_url: 'http://redmine/projects/project_name_in_redmine/issues/new'
+        }
+      )
+    end
+
+    describe "on create" do
+      it "updates the has_external_issue_tracker boolean" do
+        expect do
+          service.save!
+        end.to change { service.project.has_external_issue_tracker }.from(false).to(true)
+      end
+    end
+
+    describe "on update" do
+      it "updates the has_external_issue_tracker boolean" do
+        service.save!
+
+        expect do
+          service.update_attributes(active: false)
+        end.to change { service.project.has_external_issue_tracker }.from(true).to(false)
+      end
     end
   end
 end

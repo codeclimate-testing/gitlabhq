@@ -1,36 +1,42 @@
 require "spec_helper"
 
 describe Projects::RepositoriesController do
-  let(:project) { create(:project) }
-  let(:user)    { create(:user) }
+  let(:project) { create(:project, :repository) }
 
   describe "GET archive" do
-    before do
-      sign_in(user)
-      project.team << [user, :developer]
+    context 'as a guest' do
+      it 'responds with redirect in correct format' do
+        get :archive, namespace_id: project.namespace, project_id: project, format: "zip", ref: 'master'
 
-      allow(ArchiveRepositoryService).to receive(:new).and_return(service)
+        expect(response.header["Content-Type"]).to start_with('text/html')
+        expect(response).to be_redirect
+      end
     end
 
-    let(:service) { ArchiveRepositoryService.new(project, "master", "zip") }
-
-    it "executes ArchiveRepositoryService" do
-      expect(ArchiveRepositoryService).to receive(:new).with(project, "master", "zip")
-      expect(service).to receive(:execute)
-
-      get :archive, namespace_id: project.namespace.path, project_id: project.path, ref: "master", format: "zip"
-    end
-
-    context "when the service raises an error" do
+    context 'as a user' do
+      let(:user) { create(:user) }
 
       before do
-        allow(service).to receive(:execute).and_raise("Archive failed")
+        project.team << [user, :developer]
+        sign_in(user)
       end
 
-      it "renders Not Found" do
-        get :archive, namespace_id: project.namespace.path, project_id: project.path, ref: "master", format: "zip"
+      it "uses Gitlab::Workhorse" do
+        get :archive, namespace_id: project.namespace, project_id: project, ref: "master", format: "zip"
 
-        expect(response.status).to eq(404)
+        expect(response.header[Gitlab::Workhorse::SEND_DATA_HEADER]).to start_with("git-archive:")
+      end
+
+      context "when the service raises an error" do
+        before do
+          allow(Gitlab::Workhorse).to receive(:send_git_archive).and_raise("Archive failed")
+        end
+
+        it "renders Not Found" do
+          get :archive, namespace_id: project.namespace, project_id: project, ref: "master", format: "zip"
+
+          expect(response).to have_http_status(404)
+        end
       end
     end
   end

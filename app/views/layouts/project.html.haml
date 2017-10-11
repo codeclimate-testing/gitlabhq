@@ -1,15 +1,14 @@
-- page_title    @project.name_with_namespace
-- header_title  project_title(@project) unless header_title
-- sidebar       "project"               unless sidebar
+- page_title       @project.name_with_namespace
+- page_description @project.description    unless page_description
+- header_title     project_title(@project) unless header_title
+- nav              "project"
+- @left_sidebar    = true
 
-- content_for :scripts_body_top do
+- content_for :project_javascripts do
   - project = @target_project || @project
   - if current_user
+    -# haml-lint:disable InlineJavaScript
     :javascript
-      window.project_uploads_path = "#{namespace_project_uploads_path project.namespace,project}";
-      window.markdown_preview_path = "#{markdown_preview_namespace_project_path(project.namespace, project)}";
-
-- content_for :scripts_body do
-  = render "layouts/init_auto_complete" if current_user
+      window.uploads_path = "#{project_uploads_path(project)}";
 
 = render template: "layouts/application"

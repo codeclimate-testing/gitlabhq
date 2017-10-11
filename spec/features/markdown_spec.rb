@@ -24,9 +24,9 @@ require 'erb'
 #
 # See the MarkdownFeature class for setup details.
 
-describe 'GitLab Markdown', feature: true do
+describe 'GitLab Markdown' do
   include Capybara::Node::Matchers
-  include GitlabMarkdownHelper
+  include MarkupHelper
   include MarkdownMatchers
 
   # Sometimes it can be useful to see the parsed output of the Markdown document
@@ -39,7 +39,7 @@ describe 'GitLab Markdown', feature: true do
   end
 
   def doc(html = @html)
-    Nokogiri::HTML::DocumentFragment.parse(html)
+    @doc ||= Nokogiri::HTML::DocumentFragment.parse(html)
   end
 
   # Shared behavior that all pipelines should exhibit
@@ -58,8 +58,8 @@ describe 'GitLab Markdown', feature: true do
       end
 
       it 'allows Markdown in tables' do
-        expect(doc.at_css('td:contains("Baz")').children.to_html).
-          to eq '<strong>Baz</strong>'
+        expect(doc.at_css('td:contains("Baz")').children.to_html)
+          .to eq '<strong>Baz</strong>'
       end
 
       it 'parses fenced code blocks' do
@@ -100,7 +100,7 @@ describe 'GitLab Markdown', feature: true do
       end
 
       it 'permits img elements' do
-        expect(doc).to have_selector('img[src*="smile.png"]')
+        expect(doc).to have_selector('img[data-src*="smile.png"]')
       end
 
       it 'permits br elements' do
@@ -113,6 +113,14 @@ describe 'GitLab Markdown', feature: true do
 
       it 'permits span elements' do
         expect(doc).to have_selector('span:contains("span tag")')
+      end
+
+      it 'permits details elements' do
+        expect(doc).to have_selector('details:contains("Hiding the details")')
+      end
+
+      it 'permits summary elements' do
+        expect(doc).to have_selector('details summary:contains("collapsible")')
       end
 
       it 'permits style attribute in th elements' do
@@ -150,14 +158,14 @@ describe 'GitLab Markdown', feature: true do
     describe 'Edge Cases' do
       it 'allows markup inside link elements' do
         aggregate_failures do
-          expect(doc.at_css('a[href="#link-emphasis"]').to_html).
-            to eq %{<a href="#link-emphasis"><em>text</em></a>}
+          expect(doc.at_css('a[href="#link-emphasis"]').to_html)
+            .to eq %{<a href="#link-emphasis"><em>text</em></a>}
 
-          expect(doc.at_css('a[href="#link-strong"]').to_html).
-            to eq %{<a href="#link-strong"><strong>text</strong></a>}
+          expect(doc.at_css('a[href="#link-strong"]').to_html)
+            .to eq %{<a href="#link-strong"><strong>text</strong></a>}
 
-          expect(doc.at_css('a[href="#link-code"]').to_html).
-            to eq %{<a href="#link-code"><code>text</code></a>}
+          expect(doc.at_css('a[href="#link-code"]').to_html)
+            .to eq %{<a href="#link-code"><code>text</code></a>}
         end
       end
     end
@@ -165,23 +173,40 @@ describe 'GitLab Markdown', feature: true do
     describe 'ExternalLinkFilter' do
       it 'adds nofollow to external link' do
         link = doc.at_css('a:contains("Google")')
-        expect(link.attr('rel')).to match 'nofollow'
+
+        expect(link.attr('rel')).to include('nofollow')
+      end
+
+      it 'adds noreferrer to external link' do
+        link = doc.at_css('a:contains("Google")')
+
+        expect(link.attr('rel')).to include('noreferrer')
+      end
+
+      it 'adds _blank to target attribute for external links' do
+        link = doc.at_css('a:contains("Google")')
+
+        expect(link.attr('target')).to match('_blank')
       end
 
       it 'ignores internal link' do
         link = doc.at_css('a:contains("GitLab Root")')
+
         expect(link.attr('rel')).not_to match 'nofollow'
+        expect(link.attr('target')).not_to match '_blank'
       end
     end
   end
 
+  before do
+    @feat = MarkdownFeature.new
+
+    # `markdown` helper expects a `@project` variable
+    @project = @feat.project
+  end
+
   context 'default pipeline' do
-    before(:all) do
-      @feat = MarkdownFeature.new
-
-      # `markdown` helper expects a `@project` variable
-      @project = @feat.project
-
+    before do
       @html = markdown(@feat.raw_markdown)
     end
 
@@ -212,11 +237,81 @@ describe 'GitLab Markdown', feature: true do
         expect(doc).to reference_commit_ranges
         expect(doc).to reference_commits
         expect(doc).to reference_labels
+        expect(doc).to reference_milestones
       end
     end
 
     it 'includes TaskListFilter' do
       expect(doc).to parse_task_lists
+    end
+
+    it 'includes InlineDiffFilter' do
+      expect(doc).to parse_inline_diffs
+    end
+
+    it 'includes VideoLinkFilter' do
+      expect(doc).to parse_video_links
+    end
+  end
+
+  context 'wiki pipeline' do
+    before do
+      @project_wiki = @feat.project_wiki
+      @project_wiki_page = @feat.project_wiki_page
+
+      file = Gollum::File.new(@project_wiki.wiki)
+      expect(file).to receive(:path).and_return('images/example.jpg')
+      expect(@project_wiki).to receive(:find_file).with('images/example.jpg').and_return(file)
+      allow(@project_wiki).to receive(:wiki_base_path) { '/namespace1/gitlabhq/wikis' }
+
+      @html = markdown(@feat.raw_markdown, { pipeline: :wiki, project_wiki: @project_wiki, page_slug: @project_wiki_page.slug })
+    end
+
+    it_behaves_like 'all pipelines'
+
+    it 'includes RelativeLinkFilter' do
+      expect(doc).not_to parse_relative_links
+    end
+
+    it 'includes EmojiFilter' do
+      expect(doc).to parse_emoji
+    end
+
+    it 'includes TableOfContentsFilter' do
+      expect(doc).to create_header_links
+    end
+
+    it 'includes AutolinkFilter' do
+      expect(doc).to create_autolinks
+    end
+
+    it 'includes all reference filters' do
+      aggregate_failures do
+        expect(doc).to reference_users
+        expect(doc).to reference_issues
+        expect(doc).to reference_merge_requests
+        expect(doc).to reference_snippets
+        expect(doc).to reference_commit_ranges
+        expect(doc).to reference_commits
+        expect(doc).to reference_labels
+        expect(doc).to reference_milestones
+      end
+    end
+
+    it 'includes TaskListFilter' do
+      expect(doc).to parse_task_lists
+    end
+
+    it 'includes GollumTagsFilter' do
+      expect(doc).to parse_gollum_tags
+    end
+
+    it 'includes InlineDiffFilter' do
+      expect(doc).to parse_inline_diffs
+    end
+
+    it 'includes VideoLinkFilter' do
+      expect(doc).to parse_video_links
     end
   end
 

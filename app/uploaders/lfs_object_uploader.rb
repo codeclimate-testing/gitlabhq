@@ -1,29 +1,19 @@
-# encoding: utf-8
-
-class LfsObjectUploader < CarrierWave::Uploader::Base
+class LfsObjectUploader < GitlabUploader
   storage :file
 
   def store_dir
-    "#{Gitlab.config.lfs.storage_path}/#{model.oid[0,2]}/#{model.oid[2,2]}"
+    "#{Gitlab.config.lfs.storage_path}/#{model.oid[0, 2]}/#{model.oid[2, 2]}"
   end
 
   def cache_dir
     "#{Gitlab.config.lfs.storage_path}/tmp/cache"
   end
 
-  def move_to_cache
-    true
-  end
-
-  def move_to_store
-    true
-  end
-
-  def exists?
-    file.try(:exists?)
-  end
-
   def filename
     model.oid[4..-1]
+  end
+
+  def work_dir
+    File.join(Gitlab.config.lfs.storage_path, 'tmp', 'work')
   end
 end

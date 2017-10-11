@@ -1,20 +1,28 @@
 class CreateSnippetService < BaseService
-  def execute
-    if project.nil?
-      snippet = PersonalSnippet.new(params)
-    else
-      snippet = project.snippets.build(params)
-    end
+  include SpamCheckService
 
-    unless Gitlab::VisibilityLevel.allowed_for?(current_user,
-                                                params[:visibility_level])
+  def execute
+    filter_spam_check_params
+
+    snippet = if project
+                project.snippets.build(params)
+              else
+                PersonalSnippet.new(params)
+              end
+
+    unless Gitlab::VisibilityLevel.allowed_for?(current_user, params[:visibility_level])
       deny_visibility_level(snippet)
       return snippet
     end
 
     snippet.author = current_user
 
-    snippet.save
+    spam_check(snippet, current_user)
+
+    if snippet.save
+      UserAgentDetailService.new(snippet, @request).create
+    end
+
     snippet
   end
 end

@@ -7,12 +7,19 @@ module Search
     end
 
     def execute
-      group = Group.find_by(id: params[:group_id]) if params[:group_id].present?
-      projects = ProjectsFinder.new.execute(current_user)
-      projects = projects.in_namespace(group.id) if group
-      project_ids = projects.pluck(:id)
+      Gitlab::SearchResults.new(current_user, projects, params[:search])
+    end
 
-      Gitlab::SearchResults.new(project_ids, params[:search])
+    def projects
+      @projects ||= ProjectsFinder.new(current_user: current_user).execute
+    end
+
+    def scope
+      @scope ||= begin
+        allowed_scopes = %w[issues merge_requests milestones]
+
+        allowed_scopes.delete(params[:scope]) { 'projects' }
+      end
     end
   end
 end

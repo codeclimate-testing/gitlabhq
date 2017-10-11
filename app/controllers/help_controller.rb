@@ -1,27 +1,34 @@
 class HelpController < ApplicationController
-  skip_before_action :authenticate_user!, :reject_blocked
+  skip_before_action :authenticate_user!
 
   layout 'help'
 
-  def index
-    @help_index = File.read(Rails.root.join('doc', 'README.md'))
+  # Taken from Jekyll
+  # https://github.com/jekyll/jekyll/blob/3.5-stable/lib/jekyll/document.rb#L13
+  YAML_FRONT_MATTER_REGEXP = %r!\A(---\s*\n.*?\n?)^((---|\.\.\.)\s*$\n?)!m
 
-    # Prefix Markdown links with `help/` unless they already have been
-    # See http://rubular.com/r/nwwhzH6Z8X
-    @help_index.gsub!(/(\]\()(?!help\/)([^\)\(]+)(\))/, '\1help/\2\3')
+  def index
+    # Remove YAML frontmatter so that it doesn't look weird
+    @help_index = File.read(Rails.root.join('doc', 'README.md')).sub(YAML_FRONT_MATTER_REGEXP, '')
+
+    # Prefix Markdown links with `help/` unless they are external links
+    # See http://rubular.com/r/X3baHTbPO2
+    @help_index.gsub!(%r{(?<delim>\]\()(?!.+://)(?!/)(?<link>[^\)\(]+\))}) do
+      "#{$~[:delim]}#{Gitlab.config.gitlab.relative_url_root}/help/#{$~[:link]}"
+    end
   end
 
   def show
-    @category = clean_path_info(path_params[:category])
-    @file = path_params[:file]
+    @path = clean_path_info(path_params[:path])
 
     respond_to do |format|
       format.any(:markdown, :md, :html) do
         # Note: We are purposefully NOT using `Rails.root.join`
-        path = File.join(Rails.root, 'doc', @category, "#{@file}.md")
+        path = File.join(Rails.root, 'doc', "#{@path}.md")
 
         if File.exist?(path)
-          @markdown = File.read(path)
+          # Remove YAML frontmatter so that it doesn't look weird
+          @markdown = File.read(path).gsub(YAML_FRONT_MATTER_REGEXP, '')
 
           render 'show.html.haml'
         else
@@ -31,9 +38,9 @@ class HelpController < ApplicationController
       end
 
       # Allow access to images in the doc folder
-      format.any(:png, :gif, :jpeg) do
+      format.any(:png, :gif, :jpeg, :mp4) do
         # Note: We are purposefully NOT using `Rails.root.join`
-        path = File.join(Rails.root, 'doc', @category, "#{@file}.#{params[:format]}")
+        path = File.join(Rails.root, 'doc', "#{@path}.#{params[:format]}")
 
         if File.exist?(path)
           send_file(path, disposition: 'inline')
@@ -51,13 +58,13 @@ class HelpController < ApplicationController
   end
 
   def ui
+    @user = User.new(id: 0, name: 'John Doe', username: '@johndoe')
   end
 
   private
 
   def path_params
-    params.require(:category)
-    params.require(:file)
+    params.require(:path)
 
     params
   end

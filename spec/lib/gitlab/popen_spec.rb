@@ -1,6 +1,6 @@
 require 'spec_helper'
 
-describe 'Gitlab::Popen', no_db: true do
+describe 'Gitlab::Popen' do
   let(:path) { Rails.root.join('tmp').to_s }
 
   before do
@@ -10,16 +10,16 @@ describe 'Gitlab::Popen', no_db: true do
 
   context 'zero status' do
     before do
-      @output, @status = @klass.new.popen(%W(ls), path)
+      @output, @status = @klass.new.popen(%w(ls), path)
     end
 
     it { expect(@status).to be_zero }
-    it { expect(@output).to include('cache') }
+    it { expect(@output).to include('tests') }
   end
 
   context 'non-zero status' do
     before do
-      @output, @status = @klass.new.popen(%W(cat NOTHING), path)
+      @output, @status = @klass.new.popen(%w(cat NOTHING), path)
     end
 
     it { expect(@status).to eq(1) }
@@ -32,12 +32,32 @@ describe 'Gitlab::Popen', no_db: true do
     end
   end
 
+  context 'with custom options' do
+    let(:vars) { { 'foobar' => 123, 'PWD' => path } }
+    let(:options) { { chdir: path } }
+
+    it 'calls popen3 with the provided environment variables' do
+      expect(Open3).to receive(:popen3).with(vars, 'ls', options)
+
+      @output, @status = @klass.new.popen(%w(ls), path, { 'foobar' => 123 })
+    end
+  end
+
   context 'without a directory argument' do
     before do
-      @output, @status = @klass.new.popen(%W(ls))
+      @output, @status = @klass.new.popen(%w(ls))
     end
 
     it { expect(@status).to be_zero }
     it { expect(@output).to include('spec') }
+  end
+
+  context 'use stdin' do
+    before do
+      @output, @status = @klass.new.popen(%w[cat]) { |stdin| stdin.write 'hello' }
+    end
+
+    it { expect(@status).to be_zero }
+    it { expect(@output).to eq('hello') }
   end
 end

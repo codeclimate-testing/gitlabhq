@@ -1,43 +1,46 @@
 class RepositoryImportWorker
-  include Sidekiq::Worker
-  include Gitlab::ShellAdapter
+  ImportError = Class.new(StandardError)
 
-  sidekiq_options queue: :gitlab_shell
+  include Sidekiq::Worker
+  include DedicatedSidekiqQueue
+  include ExceptionBacktrace
+
+  sidekiq_options status_expiration: StuckImportJobsWorker::IMPORT_JOBS_EXPIRATION
 
   def perform(project_id)
     project = Project.find(project_id)
 
-    unless project.import_url == Project::UNKNOWN_IMPORT_URL
-      import_result = gitlab_shell.send(:import_repository,
-                               project.path_with_namespace,
-                               project.import_url)
-      return project.import_fail unless import_result
-    else
-      unless project.create_repository
-        return project.import_fail
-      end
-    end
+    return unless start_import(project)
 
-    data_import_result = case project.import_type
-                         when 'github'
-                           Gitlab::GithubImport::Importer.new(project).execute
-                         when 'gitlab'
-                           Gitlab::GitlabImport::Importer.new(project).execute
-                         when 'bitbucket'
-                           Gitlab::BitbucketImport::Importer.new(project).execute
-                         when 'google_code'
-                           Gitlab::GoogleCodeImport::Importer.new(project).execute
-                         when 'fogbugz'
-                           Gitlab::FogbugzImport::Importer.new(project).execute
-                         else
-                           true
-                         end
-    return project.import_fail unless data_import_result
+    Gitlab::Metrics.add_event(:import_repository,
+                              import_url: project.import_url,
+                              path: project.full_path)
 
-    Gitlab::BitbucketImport::KeyDeleter.new(project).execute if project.import_type == 'bitbucket'
+    result = Projects::ImportService.new(project, project.creator).execute
+    raise ImportError, result[:message] if result[:status] == :error
 
+    project.repository.after_import
     project.import_finish
-    project.save
-    ProjectCacheWorker.perform_async(project.id)
+  rescue ImportError => ex
+    fail_import(project, ex.message)
+    raise
+  rescue => ex
+    return unless project
+
+    fail_import(project, ex.message)
+    raise ImportError, "#{ex.class} #{ex.message}"
+  end
+
+  private
+
+  def start_import(project)
+    return true if project.import_start
+
+    Rails.logger.info("Project #{project.full_path} was in inconsistent state (#{project.import_status}) while importing.")
+    false
+  end
+
+  def fail_import(project, message)
+    project.mark_import_as_failed(message)
   end
 end

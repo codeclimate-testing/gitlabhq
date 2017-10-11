@@ -62,10 +62,6 @@ class Spinach::Features::ExploreGroups < Spinach::FeatureSteps
     expect(page).to have_content "John Doe"
   end
 
-  step 'I should not see member roles' do
-    expect(body).not_to match(%r{owner|developer|reporter|guest}i)
-  end
-
   protected
 
   def group_has_project(groupname, projectname, visibility_level)
@@ -75,18 +71,18 @@ class Spinach::Features::ExploreGroups < Spinach::FeatureSteps
       name: projectname,
       path: "#{groupname}-#{projectname}",
       visibility_level: visibility_level
-    )
+                    )
     create(:issue,
       title: "#{projectname} feature",
       project: project
-    )
+          )
     create(:merge_request,
       title: "#{projectname} feature implemented",
       source_project: project,
       target_project: project
-    )
+          )
     create(:closed_issue_event,
       project: project
-    )
+          )
   end
 end

@@ -11,7 +11,7 @@ class Projects::RepositoriesController < Projects::ApplicationController
   end
 
   def archive
-    render json: ArchiveRepositoryService.new(@project, params[:ref], params[:format]).execute
+    send_git_archive @repository, ref: params[:ref], format: params[:format]
   rescue => ex
     logger.error("#{self.class.name}: #{ex}")
     return git_not_found!

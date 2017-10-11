@@ -1,6 +1,11 @@
+# coding: utf-8
 require 'spec_helper'
 
 describe ApplicationHelper do
+  include UploadHelpers
+
+  let(:gitlab_host) { "http://#{Gitlab.config.gitlab.host}" }
+
   describe 'current_controller?' do
     it 'returns true when controller matches argument' do
       stub_controller_name('foo')
@@ -52,60 +57,97 @@ describe ApplicationHelper do
   end
 
   describe 'project_icon' do
-    let(:avatar_file_path) { File.join(Rails.root, 'spec', 'fixtures', 'banana_sample.gif') }
+    it 'returns an url for the avatar' do
+      project = create(:project, avatar: File.open(uploaded_image_temp_path))
+      avatar_url = "/uploads/-/system/project/avatar/#{project.id}/banana_sample.gif"
 
-    it 'should return an url for the avatar' do
-      project = create(:project, avatar: File.open(avatar_file_path))
+      expect(helper.project_icon(project.full_path).to_s)
+        .to eq "<img data-src=\"#{avatar_url}\" class=\" lazy\" src=\"#{LazyImageTagHelper.placeholder_image}\" />"
 
-      avatar_url = "http://localhost/uploads/project/avatar/#{project.id}/banana_sample.gif"
-      expect(helper.project_icon("#{project.namespace.to_param}/#{project.to_param}").to_s).
-        to eq "<img alt=\"Banana sample\" src=\"#{avatar_url}\" />"
+      allow(ActionController::Base).to receive(:asset_host).and_return(gitlab_host)
+      avatar_url = "#{gitlab_host}/uploads/-/system/project/avatar/#{project.id}/banana_sample.gif"
+
+      expect(helper.project_icon(project.full_path).to_s)
+        .to eq "<img data-src=\"#{avatar_url}\" class=\" lazy\" src=\"#{LazyImageTagHelper.placeholder_image}\" />"
     end
 
-    it 'should give uploaded icon when present' do
+    it 'gives uploaded icon when present' do
       project = create(:project)
 
       allow_any_instance_of(Project).to receive(:avatar_in_git).and_return(true)
 
-      avatar_url = 'http://localhost' + namespace_project_avatar_path(project.namespace, project)
-      expect(helper.project_icon("#{project.namespace.to_param}/#{project.to_param}").to_s).to match(
-        image_tag(avatar_url))
+      avatar_url = "#{gitlab_host}#{project_avatar_path(project)}"
+      expect(helper.project_icon(project.full_path).to_s)
+        .to eq "<img data-src=\"#{avatar_url}\" class=\" lazy\" src=\"#{LazyImageTagHelper.placeholder_image}\" />"
     end
   end
 
   describe 'avatar_icon' do
-    let(:avatar_file_path) { File.join(Rails.root, 'spec', 'fixtures', 'banana_sample.gif') }
+    let(:user) { create(:user, avatar: File.open(uploaded_image_temp_path)) }
 
-    it 'should return an url for the avatar' do
-      user = create(:user, avatar: File.open(avatar_file_path))
+    context 'using an email' do
+      context 'when there is a matching user' do
+        it 'returns a relative URL for the avatar' do
+          expect(helper.avatar_icon(user.email).to_s)
+            .to eq("/uploads/-/system/user/avatar/#{user.id}/banana_sample.gif")
+        end
 
-      expect(helper.avatar_icon(user.email).to_s).
-        to match("/uploads/user/avatar/#{user.id}/banana_sample.gif")
+        context 'when an asset_host is set in the config' do
+          let(:asset_host) { 'http://assets' }
+
+          before do
+            allow(ActionController::Base).to receive(:asset_host).and_return(asset_host)
+          end
+
+          it 'returns an absolute URL on that asset host' do
+            expect(helper.avatar_icon(user.email, only_path: false).to_s)
+              .to eq("#{asset_host}/uploads/-/system/user/avatar/#{user.id}/banana_sample.gif")
+          end
+        end
+
+        context 'when only_path is set to false' do
+          it 'returns an absolute URL for the avatar' do
+            expect(helper.avatar_icon(user.email, only_path: false).to_s)
+              .to eq("#{gitlab_host}/uploads/-/system/user/avatar/#{user.id}/banana_sample.gif")
+          end
+        end
+
+        context 'when the GitLab instance is at a relative URL' do
+          before do
+            stub_config_setting(relative_url_root: '/gitlab')
+            # Must be stubbed after the stub above, and separately
+            stub_config_setting(url: Settings.send(:build_gitlab_url))
+          end
+
+          it 'returns a relative URL with the correct prefix' do
+            expect(helper.avatar_icon(user.email).to_s)
+              .to eq("/gitlab/uploads/-/system/user/avatar/#{user.id}/banana_sample.gif")
+          end
+        end
+      end
+
+      context 'when no user exists for the email' do
+        it 'calls gravatar_icon' do
+          expect(helper).to receive(:gravatar_icon).with('foo@example.com', 20, 2)
+
+          helper.avatar_icon('foo@example.com', 20, 2)
+        end
+      end
     end
 
-    it 'should return an url for the avatar with relative url' do
-      stub_config_setting(relative_url_root: '/gitlab')
-      # Must be stubbed after the stub above, and separately
-      stub_config_setting(url: Settings.send(:build_gitlab_url))
+    describe 'using a user' do
+      context 'when only_path is true' do
+        it 'returns a relative URL for the avatar' do
+          expect(helper.avatar_icon(user, only_path: true).to_s)
+            .to eq("/uploads/-/system/user/avatar/#{user.id}/banana_sample.gif")
+        end
+      end
 
-      user = create(:user, avatar: File.open(avatar_file_path))
-
-      expect(helper.avatar_icon(user.email).to_s).
-        to match("/gitlab/uploads/user/avatar/#{user.id}/banana_sample.gif")
-    end
-
-    it 'should call gravatar_icon when no User exists with the given email' do
-      expect(helper).to receive(:gravatar_icon).with('foo@example.com', 20)
-
-      helper.avatar_icon('foo@example.com', 20)
-    end
-
-    describe 'using a User' do
-      it 'should return an URL for the avatar' do
-        user = create(:user, avatar: File.open(avatar_file_path))
-
-        expect(helper.avatar_icon(user).to_s).
-          to match("/uploads/user/avatar/#{user.id}/banana_sample.gif")
+      context 'when only_path is false' do
+        it 'returns an absolute URL for the avatar' do
+          expect(helper.avatar_icon(user, only_path: false).to_s)
+            .to eq("#{gitlab_host}/uploads/-/system/user/avatar/#{user.id}/banana_sample.gif")
+        end
       end
     end
   end
@@ -135,30 +177,34 @@ describe ApplicationHelper do
       it 'returns a valid Gravatar URL' do
         stub_config_setting(https: false)
 
-        expect(helper.gravatar_icon(user_email)).
-          to match('http://www.gravatar.com/avatar/b58c6f14d292556214bd64909bcdb118')
+        expect(helper.gravatar_icon(user_email))
+          .to match('http://www.gravatar.com/avatar/b58c6f14d292556214bd64909bcdb118')
       end
 
       it 'uses HTTPs when configured' do
         stub_config_setting(https: true)
 
-        expect(helper.gravatar_icon(user_email)).
-          to match('https://secure.gravatar.com')
+        expect(helper.gravatar_icon(user_email))
+          .to match('https://secure.gravatar.com')
       end
 
-      it 'should return custom gravatar path when gravatar_url is set' do
+      it 'returns custom gravatar path when gravatar_url is set' do
         stub_gravatar_setting(plain_url: 'http://example.local/?s=%{size}&hash=%{hash}')
 
-        expect(gravatar_icon(user_email, 20)).
-          to eq('http://example.local/?s=20&hash=b58c6f14d292556214bd64909bcdb118')
+        expect(gravatar_icon(user_email, 20))
+          .to eq('http://example.local/?s=40&hash=b58c6f14d292556214bd64909bcdb118')
       end
 
       it 'accepts a custom size argument' do
-        expect(helper.gravatar_icon(user_email, 64)).to include '?s=64'
+        expect(helper.gravatar_icon(user_email, 64)).to include '?s=128'
       end
 
-      it 'defaults size to 40 when given an invalid size' do
-        expect(helper.gravatar_icon(user_email, nil)).to include '?s=40'
+      it 'defaults size to 40@2x when given an invalid size' do
+        expect(helper.gravatar_icon(user_email, nil)).to include '?s=80'
+      end
+
+      it 'accepts a scaling factor' do
+        expect(helper.gravatar_icon(user_email, 40, 3)).to include '?s=120'
       end
 
       it 'ignores case and surrounding whitespace' do
@@ -167,51 +213,6 @@ describe ApplicationHelper do
 
         expect(normal).to eq upcase
       end
-    end
-  end
-
-  describe 'grouped_options_refs' do
-    let(:options) { helper.grouped_options_refs }
-    let(:project) { create(:project) }
-
-    before do
-      assign(:project, project)
-
-      # Override Rails' grouped_options_for_select helper to just return the
-      # first argument (`options`), since it's easier to work with than the
-      # generated HTML.
-      allow(helper).to receive(:grouped_options_for_select).
-        and_wrap_original { |_, *args| args.first }
-    end
-
-    it 'includes a list of branch names' do
-      expect(options[0][0]).to eq('Branches')
-      expect(options[0][1]).to include('master', 'feature')
-    end
-
-    it 'includes a list of tag names' do
-      expect(options[1][0]).to eq('Tags')
-      expect(options[1][1]).to include('v1.0.0', 'v1.1.0')
-    end
-
-    it 'includes a specific commit ref if defined' do
-      # Must be an instance variable
-      ref = '2ed06dc41dbb5936af845b87d79e05bbf24c73b8'
-      assign(:ref, ref)
-
-      expect(options[2][0]).to eq('Commit')
-      expect(options[2][1]).to eq([ref])
-    end
-
-    it 'sorts tags in a natural order' do
-      # Stub repository.tag_names to make sure we get some valid testing data
-      expect(project.repository).to receive(:tag_names).
-        and_return(['v1.0.9', 'v1.0.10', 'v2.0', 'v3.1.4.2', 'v2.0rc1¿',
-                    'v1.0.9a', 'v2.0-rc1', 'v2.0rc2'])
-
-      expect(options[1][1]).
-        to eq(['v3.1.4.2', 'v2.0', 'v2.0rc2', 'v2.0rc1¿', 'v2.0-rc1', 'v1.0.10',
-               'v1.0.9', 'v1.0.9a'])
     end
   end
 
@@ -236,8 +237,8 @@ describe ApplicationHelper do
   describe 'time_ago_with_tooltip' do
     def element(*arguments)
       Time.zone = 'UTC'
-      time = Time.zone.parse('2015-07-02 08:00')
-      element = helper.time_ago_with_tooltip(time, *arguments)
+      @time = Time.zone.parse('2015-07-02 08:23')
+      element = helper.time_ago_with_tooltip(@time, *arguments)
 
       Nokogiri::HTML::DocumentFragment.parse(element).first_element_child
     end
@@ -247,61 +248,63 @@ describe ApplicationHelper do
     end
 
     it 'includes the date string' do
-      expect(element.text).to eq '2015-07-02 08:00:00 UTC'
+      expect(element.text).to eq @time.strftime("%b %d, %Y")
     end
 
     it 'has a datetime attribute' do
-      expect(element.attr('datetime')).to eq '2015-07-02T08:00:00Z'
+      expect(element.attr('datetime')).to eq '2015-07-02T08:23:00Z'
     end
 
     it 'has a formatted title attribute' do
-      expect(element.attr('title')).to eq 'Jul 02, 2015 8:00am'
+      expect(element.attr('title')).to eq 'Jul 2, 2015 8:23am'
     end
 
     it 'includes a default js-timeago class' do
-      expect(element.attr('class')).to eq 'time_ago js-timeago'
+      expect(element.attr('class')).to eq 'js-timeago'
     end
 
     it 'accepts a custom html_class' do
-      expect(element(html_class: 'custom_class').attr('class')).to eq 'custom_class js-timeago'
+      expect(element(html_class: 'custom_class').attr('class'))
+        .to eq 'js-timeago custom_class'
     end
 
     it 'accepts a custom tooltip placement' do
       expect(element(placement: 'bottom').attr('data-placement')).to eq 'bottom'
     end
 
-    it 're-initializes timeago Javascript' do
-      el = element.next_element
-
-      expect(el.name).to eq 'script'
-      expect(el.text).to include "$('.js-timeago').timeago()"
+    it 'converts to Time' do
+      expect { helper.time_ago_with_tooltip(Date.today) }.not_to raise_error
     end
 
-    it 'allows the script tag to be excluded' do
-      expect(element(skip_js: true)).not_to include 'script'
+    it 'add class for the short format' do
+      timeago_element = element(short_format: 'short')
+      expect(timeago_element.attr('class')).to eq 'js-short-timeago'
+      expect(timeago_element.next_element).to eq nil
     end
   end
 
-  describe 'render_markup' do
-    let(:content) { 'Noël' }
+  describe '#active_when' do
+    it { expect(helper.active_when(true)).to eq('active') }
+    it { expect(helper.active_when(false)).to eq(nil) }
+  end
 
-    it 'should preserve encoding' do
-      expect(content.encoding.name).to eq('UTF-8')
-      expect(helper.render_markup('foo.rst', content).encoding.name).to eq('UTF-8')
+  describe '#support_url' do
+    context 'when alternate support url is specified' do
+      let(:alternate_url) { 'http://company.example.com/getting-help' }
+
+      before do
+        stub_application_setting(help_page_support_url: alternate_url)
+      end
+
+      it 'returns the alternate support url' do
+        expect(helper.support_url).to eq(alternate_url)
+      end
     end
 
-    it "should delegate to #markdown when file name corresponds to Markdown" do
-      expect(helper).to receive(:gitlab_markdown?).with('foo.md').and_return(true)
-      expect(helper).to receive(:markdown).and_return('NOEL')
-
-      expect(helper.render_markup('foo.md', content)).to eq('NOEL')
-    end
-
-    it "should delegate to #asciidoc when file name corresponds to AsciiDoc" do
-      expect(helper).to receive(:asciidoc?).with('foo.adoc').and_return(true)
-      expect(helper).to receive(:asciidoc).and_return('NOEL')
-
-      expect(helper.render_markup('foo.adoc', content)).to eq('NOEL')
+    context 'when alternate support url is not specified' do
+      it 'builds the support url from the promo_url' do
+        expect(helper.support_url).to eq(helper.promo_url + '/getting-help/')
+      end
     end
   end
 end

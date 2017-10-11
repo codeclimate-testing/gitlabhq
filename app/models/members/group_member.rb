@@ -1,46 +1,37 @@
-# == Schema Information
-#
-# Table name: members
-#
-#  id                 :integer          not null, primary key
-#  access_level       :integer          not null
-#  source_id          :integer          not null
-#  source_type        :string(255)      not null
-#  user_id            :integer
-#  notification_level :integer          not null
-#  type               :string(255)
-#  created_at         :datetime
-#  updated_at         :datetime
-#  created_by_id      :integer
-#  invite_email       :string(255)
-#  invite_token       :string(255)
-#  invite_accepted_at :datetime
-#
-
 class GroupMember < Member
-  SOURCE_TYPE = 'Namespace'
+  SOURCE_TYPE = 'Namespace'.freeze
 
-  belongs_to :group, class_name: 'Group', foreign_key: 'source_id'
+  belongs_to :group, foreign_key: 'source_id'
+
+  delegate :update_two_factor_requirement, to: :user
 
   # Make sure group member points only to group as it source
   default_value_for :source_type, SOURCE_TYPE
-  default_value_for :notification_level, Notification::N_GLOBAL
-  validates_format_of :source_type, with: /\ANamespace\z/
+  validates :source_type, format: { with: /\ANamespace\z/ }
   default_scope { where(source_type: SOURCE_TYPE) }
 
-  scope :with_group, ->(group) { where(source_id: group.id) }
-  scope :with_user, ->(user) { where(user_id: user.id) }
+  after_create :update_two_factor_requirement, unless: :invite?
+  after_destroy :update_two_factor_requirement, unless: :invite?
 
   def self.access_level_roles
     Gitlab::Access.options_with_owner
+  end
+
+  def self.access_levels
+    Gitlab::Access.sym_options_with_owner
   end
 
   def group
     source
   end
 
-  def access_field
-    access_level
+  # Because source_type is `Namespace`...
+  def real_source_type
+    'Group'
+  end
+
+  def notifiable_options
+    { group: group }
   end
 
   private

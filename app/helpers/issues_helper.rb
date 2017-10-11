@@ -13,29 +13,23 @@ module IssuesHelper
     OpenStruct.new(id: 0, title: 'None (backlog)', name: 'Unassigned')
   end
 
-  def url_for_project_issues(project = @project, options = {})
-    return '' if project.nil?
-
-    if options[:only_path]
-      project.issues_tracker.project_path
-    else
-      project.issues_tracker.project_url
-    end
-  end
-
-  def url_for_new_issue(project = @project, options = {})
-    return '' if project.nil?
-
-    if options[:only_path]
-      project.issues_tracker.new_issue_path
-    else
-      project.issues_tracker.new_issue_url
-    end
-  end
-
   def url_for_issue(issue_iid, project = @project, options = {})
     return '' if project.nil?
 
+    url =
+      if options[:internal]
+        url_for_internal_issue(issue_iid, project, options)
+      else
+        url_for_tracker_issue(issue_iid, project, options)
+      end
+
+    # Ensure we return a valid URL to prevent possible XSS.
+    URI.parse(url).to_s
+  rescue URI::InvalidURIError
+    ''
+  end
+
+  def url_for_tracker_issue(issue_iid, project, options)
     if options[:only_path]
       project.issues_tracker.issue_path(issue_iid)
     else
@@ -43,50 +37,118 @@ module IssuesHelper
     end
   end
 
-  def bulk_update_milestone_options
-    options_for_select([['None (backlog)', -1]]) +
-        options_from_collection_for_select(project_active_milestones, 'id',
-                                           'title', params[:milestone_id])
+  def url_for_internal_issue(issue_iid, project = @project, options = {})
+    helpers = Gitlab::Routing.url_helpers
+
+    if options[:only_path]
+      helpers.namespace_project_issue_path(namespace_id: project.namespace, project_id: project, id: issue_iid)
+    else
+      helpers.namespace_project_issue_url(namespace_id: project.namespace, project_id: project, id: issue_iid)
+    end
   end
 
   def milestone_options(object)
-    options_from_collection_for_select(object.project.milestones.active,
-                                       'id', 'title', object.milestone_id)
+    milestones = object.project.milestones.active.reorder(due_date: :asc, title: :asc).to_a
+    milestones.unshift(object.milestone) if object.milestone.present? && object.milestone.closed?
+    milestones.unshift(Milestone::None)
+
+    options_from_collection_for_select(milestones, 'id', 'title', object.milestone_id)
   end
 
-  def issue_box_class(item)
-    if item.respond_to?(:expired?) && item.expired?
-      'issue-box-expired'
-    elsif item.respond_to?(:merged?) && item.merged?
-      'issue-box-merged'
+  def project_options(issuable, current_user, ability: :read_project)
+    projects = current_user.authorized_projects.order_id_desc
+    projects = projects.select do |project|
+      current_user.can?(ability, project)
+    end
+
+    no_project = OpenStruct.new(id: 0, name_with_namespace: 'No project')
+    projects.unshift(no_project)
+    projects.delete(issuable.project)
+
+    options_from_collection_for_select(projects, :id, :name_with_namespace)
+  end
+
+  def status_box_class(item)
+    if item.try(:expired?)
+      'status-box-expired'
+    elsif item.try(:merged?)
+      'status-box-merged'
     elsif item.closed?
-      'issue-box-closed'
+      'status-box-closed'
+    elsif item.try(:upcoming?)
+      'status-box-upcoming'
     else
-      'issue-box-open'
+      'status-box-open'
     end
   end
 
-  def issue_to_atom(xml, issue)
-    xml.entry do
-      xml.id      namespace_project_issue_url(issue.project.namespace,
-                                              issue.project, issue)
-      xml.link    href: namespace_project_issue_url(issue.project.namespace,
-                                                    issue.project, issue)
-      xml.title   truncate(issue.title, length: 80)
-      xml.updated issue.created_at.strftime("%Y-%m-%dT%H:%M:%SZ")
-      xml.media   :thumbnail, width: "40", height: "40", url: image_url(avatar_icon(issue.author_email))
-      xml.author do |author|
-        xml.name issue.author_name
-        xml.email issue.author_email
+  def issue_button_visibility(issue, closed)
+    return 'hidden' if issue.closed? == closed
+  end
+
+  def confidential_icon(issue)
+    icon('eye-slash') if issue.confidential?
+  end
+
+  def award_user_list(awards, current_user, limit: 10)
+    names = awards.map do |award|
+      award.user == current_user ? 'You' : award.user.name
+    end
+
+    current_user_name = names.delete('You')
+    names = names.insert(0, current_user_name).compact.first(limit)
+
+    names << "#{awards.size - names.size} more." if awards.size > names.size
+
+    names.to_sentence
+  end
+
+  def award_state_class(awards, current_user)
+    if !current_user
+      "disabled"
+    elsif current_user && awards.find { |a| a.user_id == current_user.id }
+      "active"
+    else
+      ""
+    end
+  end
+
+  def award_user_authored_class(award)
+    if award == 'thumbsdown' || award == 'thumbsup'
+      'user-authored js-user-authored'
+    else
+      ''
+    end
+  end
+
+  def awards_sort(awards)
+    awards.sort_by do |award, award_emojis|
+      if award == "thumbsup"
+        0
+      elsif award == "thumbsdown"
+        1
+      else
+        2
       end
-      xml.summary issue.title
-    end
+    end.to_h
   end
 
-  def merge_requests_sentence(merge_requests)
-    merge_requests.map(&:to_reference).to_sentence(last_word_connector: ', or ')
+  def link_to_discussions_to_resolve(merge_request, single_discussion = nil)
+    link_text = merge_request.to_reference
+    link_text += " (discussion #{single_discussion.first_note.id})" if single_discussion
+
+    path = if single_discussion
+             Gitlab::UrlBuilder.build(single_discussion.first_note)
+           else
+             project = merge_request.project
+             project_merge_request_path(project, merge_request)
+           end
+
+    link_to link_text, path
   end
 
-  # Required for Gitlab::Markdown::IssueReferenceFilter
+  # Required for Banzai::Filter::IssueReferenceFilter
   module_function :url_for_issue
+  module_function :url_for_internal_issue
+  module_function :url_for_tracker_issue
 end

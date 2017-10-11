@@ -5,7 +5,6 @@ class InvitesController < ApplicationController
   respond_to :html
 
   def show
-
   end
 
   def accept
@@ -43,9 +42,7 @@ class InvitesController < ApplicationController
     @token = params[:id]
     @member = Member.find_by_invite_token(@token)
 
-    unless @member
-      render_404 and return
-    end
+    return render_404 unless @member
 
     @member
   end
@@ -66,7 +63,7 @@ class InvitesController < ApplicationController
     when Project
       project = member.source
       label = "project #{project.name_with_namespace}"
-      path = namespace_project_path(project.namespace, project)
+      path = project_path(project)
     when Group
       group = member.source
       label = "group #{group.name}"

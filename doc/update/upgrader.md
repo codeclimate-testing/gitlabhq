@@ -4,7 +4,7 @@
 
 Although deprecated, if someone wants to make this script into a gem or otherwise improve it merge requests are welcome.
 
-*Make sure you view this [upgrade guide from the 'master' branch](../../../master/doc/update/upgrader.md) for the most up to date instructions.*
+*Make sure you view this [upgrade guide from the 'master' branch](https://gitlab.com/gitlab-org/gitlab-ce/blob/master/doc/update/upgrader.md) for the most up to date instructions.*
 
 GitLab Upgrader - a ruby script that allows you easily upgrade GitLab to latest minor version.
 
@@ -60,6 +60,7 @@ GitLab Shell might be outdated, running the commands below ensures you're using 
 cd /home/git/gitlab-shell
 sudo -u git -H git fetch
 sudo -u git -H git checkout v`cat /home/git/gitlab/GITLAB_SHELL_VERSION`
+sudo -u git -H sh -c 'if [ -x bin/compile ] ; then bin/compile ; fi'
 ```
 
 ## One line upgrade command
@@ -78,6 +79,7 @@ cd /home/git/gitlab; \
   cd /home/git/gitlab-shell; \
   sudo -u git -H git fetch; \
   sudo -u git -H git checkout v`cat /home/git/gitlab/GITLAB_SHELL_VERSION`; \
+  sudo -u git -H sh -c 'if [ -x bin/compile ] ; then bin/compile ; fi'; \
   cd /home/git/gitlab; \
   sudo service gitlab start; \
   sudo service nginx restart; \

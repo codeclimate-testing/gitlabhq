@@ -1,29 +1,14 @@
 class DashboardController < Dashboard::ApplicationController
+  include IssuesAction
+  include MergeRequestsAction
+
   before_action :event_filter, only: :activity
   before_action :projects, only: [:issues, :merge_requests]
+  before_action :set_show_full_reference, only: [:issues, :merge_requests]
 
   respond_to :html
 
-  def merge_requests
-    @merge_requests = get_merge_requests_collection
-    @merge_requests = @merge_requests.page(params[:page]).per(PER_PAGE)
-    @merge_requests = @merge_requests.preload(:author, :target_project)
-  end
-
-  def issues
-    @issues = get_issues_collection
-    @issues = @issues.page(params[:page]).per(PER_PAGE)
-    @issues = @issues.preload(:author, :project)
-
-    respond_to do |format|
-      format.html
-      format.atom { render layout: false }
-    end
-  end
-
   def activity
-    @last_push = current_user.recent_push
-
     respond_to do |format|
       format.html
 
@@ -37,19 +22,19 @@ class DashboardController < Dashboard::ApplicationController
   protected
 
   def load_events
-    project_ids =
+    projects =
       if params[:filter] == "starred"
-        current_user.starred_projects
+        ProjectsFinder.new(current_user: current_user, params: { starred: true }).execute
       else
         current_user.authorized_projects
-      end.pluck(:id)
+      end
 
-    @events = Event.in_projects(project_ids)
-    @events = @event_filter.apply_filter(@events).with_associations
-    @events = @events.limit(20).offset(params[:offset] || 0)
+    @events = EventCollection
+      .new(projects, offset: params[:offset].to_i, filter: @event_filter)
+      .to_a
   end
 
-  def projects
-    @projects ||= current_user.authorized_projects.sorted_by_activity.non_archived
+  def set_show_full_reference
+    @show_full_reference = true
   end
 end

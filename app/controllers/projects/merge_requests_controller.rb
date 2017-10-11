@@ -1,226 +1,260 @@
-class Projects::MergeRequestsController < Projects::ApplicationController
-  before_action :module_enabled
-  before_action :merge_request, only: [
-    :edit, :update, :show, :diffs, :commits, :merge, :merge_check,
-    :ci_status, :toggle_subscription
-  ]
-  before_action :closes_issues, only: [:edit, :update, :show, :diffs, :commits]
-  before_action :validates_merge_request, only: [:show, :diffs, :commits]
-  before_action :define_show_vars, only: [:show, :diffs, :commits]
-  before_action :ensure_ref_fetched, only: [:show, :commits, :diffs]
+class Projects::MergeRequestsController < Projects::MergeRequests::ApplicationController
+  include ToggleSubscriptionAction
+  include IssuableActions
+  include RendersNotes
+  include RendersCommits
+  include ToggleAwardEmoji
+  include IssuableCollections
 
-  # Allow read any merge_request
-  before_action :authorize_read_merge_request!
+  skip_before_action :merge_request, only: [:index, :bulk_update]
+  skip_before_action :ensure_ref_fetched, only: [:index, :bulk_update]
 
-  # Allow write(create) merge_request
-  before_action :authorize_create_merge_request!, only: [:new, :create]
+  before_action :authorize_update_merge_request!, only: [:close, :edit, :update, :remove_wip, :sort]
 
-  # Allow modify merge_request
-  before_action :authorize_update_merge_request!, only: [:close, :edit, :update, :sort]
+  before_action :authenticate_user!, only: [:assign_related_issues]
 
   def index
-    terms = params['issue_search']
-    @merge_requests = get_merge_requests_collection
+    @collection_type    = "MergeRequest"
+    @merge_requests     = merge_requests_collection
+    @merge_requests     = @merge_requests.page(params[:page])
+    @merge_requests     = @merge_requests.preload(merge_request_diff: :merge_request)
+    @issuable_meta_data = issuable_meta_data(@merge_requests, @collection_type)
+    @total_pages        = merge_requests_page_count(@merge_requests)
 
-    if terms.present?
-      if terms =~ /\A[#!](\d+)\z/
-        @merge_requests = @merge_requests.where(iid: $1)
-      else
-        @merge_requests = @merge_requests.full_search(terms)
-      end
+    return if redirect_out_of_range(@merge_requests, @total_pages)
+
+    if params[:label_name].present?
+      labels_params = { project_id: @project.id, title: params[:label_name] }
+      @labels = LabelsFinder.new(current_user, labels_params).execute
     end
 
-    @merge_requests = @merge_requests.page(params[:page]).per(PER_PAGE)
-    @merge_requests = @merge_requests.preload(:target_project)
+    @users = []
+    if params[:assignee_id].present?
+      assignee = User.find_by_id(params[:assignee_id])
+      @users.push(assignee) if assignee
+    end
+
+    if params[:author_id].present?
+      author = User.find_by_id(params[:author_id])
+      @users.push(author) if author
+    end
 
     respond_to do |format|
       format.html
       format.json do
         render json: {
-          html: view_to_html_string("projects/merge_requests/_merge_requests")
+          html: view_to_html_string("projects/merge_requests/_merge_requests"),
+          labels: @labels.as_json(methods: :text_color)
         }
       end
     end
   end
 
   def show
-    @note_counts = Note.where(commit_id: @merge_request.commits.map(&:id)).
-      group(:commit_id).count
+    validates_merge_request
+    ensure_ref_fetched
+    close_merge_request_without_source_project
+    check_if_can_be_merged
+
+    # Return if the response has already been rendered
+    return if response_body
 
     respond_to do |format|
-      format.html
-      format.json { render json: @merge_request }
-      format.diff { render text: @merge_request.to_diff(current_user) }
-      format.patch { render text: @merge_request.to_patch(current_user) }
-    end
-  end
+      format.html do
+        # Build a note object for comment form
+        @note = @project.notes.new(noteable: @merge_request)
 
-  def diffs
-    @commit = @merge_request.last_commit
-    @first_commit = @merge_request.first_commit
+        @noteable = @merge_request
+        @commits_count = @merge_request.commits_count
 
-    @comments_allowed = @reply_allowed = true
-    @comments_target = {
-      noteable_type: 'MergeRequest',
-      noteable_id: @merge_request.id
-    }
-    @line_notes = @merge_request.notes.where("line_code is not null")
+        @discussions = @merge_request.discussions
+        @notes = prepare_notes_for_rendering(@discussions.flat_map(&:notes), @noteable)
 
-    respond_to do |format|
-      format.html
-      format.json { render json: { html: view_to_html_string("projects/merge_requests/show/_diffs") } }
+        labels
+
+        set_pipeline_variables
+
+        # n+1: https://gitlab.com/gitlab-org/gitlab-ce/issues/37432
+        Gitlab::GitalyClient.allow_n_plus_1_calls do
+          render
+        end
+      end
+
+      format.json do
+        Gitlab::PollingInterval.set_header(response, interval: 10_000)
+
+        render json: serializer.represent(@merge_request, basic: params[:basic])
+      end
+
+      format.patch  do
+        return render_404 unless @merge_request.diff_refs
+
+        send_git_patch @project.repository, @merge_request.diff_refs
+      end
+
+      format.diff do
+        return render_404 unless @merge_request.diff_refs
+
+        send_git_diff @project.repository, @merge_request.diff_refs
+      end
     end
   end
 
   def commits
-    respond_to do |format|
-      format.html { render 'show' }
-      format.json { render json: { html: view_to_html_string('projects/merge_requests/show/_commits') } }
-    end
+    # Get commits from repository
+    # or from cache if already merged
+    @commits = prepare_commits_for_rendering(@merge_request.commits)
+    @note_counts = Note.where(commit_id: @commits.map(&:id))
+      .group(:commit_id).count
+
+    render json: { html: view_to_html_string('projects/merge_requests/_commits') }
   end
 
-  def new
-    params[:merge_request] ||= ActionController::Parameters.new(source_project: @project)
-    @merge_request = MergeRequests::BuildService.new(project, current_user, merge_request_params).execute
+  def pipelines
+    @pipelines = @merge_request.all_pipelines
 
-    @target_branches = if @merge_request.target_project
-                         @merge_request.target_project.repository.branch_names
-                       else
-                         []
-                       end
+    Gitlab::PollingInterval.set_header(response, interval: 10_000)
 
-    @target_project = merge_request.target_project
-    @source_project = merge_request.source_project
-    @commits = @merge_request.compare_commits
-    @commit = @merge_request.last_commit
-    @first_commit = @merge_request.first_commit
-    @diffs = @merge_request.compare_diffs
-    @note_counts = Note.where(commit_id: @commits.map(&:id)).
-      group(:commit_id).count
+    render json: {
+      pipelines: PipelineSerializer
+        .new(project: @project, current_user: @current_user)
+        .represent(@pipelines),
+      count: {
+        all: @pipelines.count
+      }
+    }
   end
 
   def edit
-    @source_project = @merge_request.source_project
-    @target_project = @merge_request.target_project
-    @target_branches = @merge_request.target_project.repository.branch_names
-  end
-
-  def create
-    @target_branches ||= []
-    @merge_request = MergeRequests::CreateService.new(project, current_user, merge_request_params).execute
-
-    if @merge_request.valid?
-      redirect_to(merge_request_path(@merge_request))
-    else
-      @source_project = @merge_request.source_project
-      @target_project = @merge_request.target_project
-      render action: "new"
-    end
+    define_edit_vars
   end
 
   def update
-    @merge_request = MergeRequests::UpdateService.new(project, current_user, merge_request_params).execute(@merge_request)
+    @merge_request = ::MergeRequests::UpdateService.new(project, current_user, merge_request_params).execute(@merge_request)
 
-    if @merge_request.valid?
-      respond_to do |format|
-        format.js
-        format.html do
-          redirect_to([@merge_request.target_project.namespace.becomes(Namespace),
-                       @merge_request.target_project, @merge_request])
-        end
-        format.json do
-          render json: {
-            saved: @merge_request.valid?,
-            assignee_avatar_url: @merge_request.assignee.try(:avatar_url)
-          }
+    respond_to do |format|
+      format.html do
+        if @merge_request.valid?
+          redirect_to([@merge_request.target_project.namespace.becomes(Namespace), @merge_request.target_project, @merge_request])
+        else
+          define_edit_vars
+
+          render :edit
         end
       end
-    else
-      render "edit"
+
+      format.json do
+        render json: @merge_request.to_json(include: { milestone: {}, assignee: { only: [:name, :username], methods: [:avatar_url] }, labels: { methods: :text_color } }, methods: [:task_status, :task_status_short])
+      end
     end
+  rescue ActiveRecord::StaleObjectError
+    define_edit_vars if request.format.html?
+
+    render_conflict_response
   end
 
-  def merge_check
-    if @merge_request.unchecked?
-      @merge_request.check_if_can_be_merged
+  def remove_wip
+    @merge_request = ::MergeRequests::UpdateService
+      .new(project, current_user, wip_event: 'unwip')
+      .execute(@merge_request)
+
+    render json: serializer.represent(@merge_request)
+  end
+
+  def commit_change_content
+    render partial: 'projects/merge_requests/widget/commit_change_content', layout: false
+  end
+
+  def cancel_merge_when_pipeline_succeeds
+    unless @merge_request.can_cancel_merge_when_pipeline_succeeds?(current_user)
+      return access_denied!
     end
 
-    closes_issues
+    ::MergeRequests::MergeWhenPipelineSucceedsService
+      .new(@project, current_user)
+      .cancel(@merge_request)
 
-    render partial: "projects/merge_requests/widget/show.html.haml", layout: false
+    render json: serializer.represent(@merge_request)
   end
 
   def merge
     return access_denied! unless @merge_request.can_be_merged_by?(current_user)
 
-    if @merge_request.mergeable?
-      @merge_request.update(merge_error: nil)
-      MergeWorker.perform_async(@merge_request.id, current_user.id, params)
-      @status = true
+    status = merge!
+
+    if @merge_request.merge_error
+      render json: { status: status, merge_error: @merge_request.merge_error }
     else
-      @status = false
+      render json: { status: status }
     end
   end
 
-  def branch_from
-    #This is always source
-    @source_project = @merge_request.nil? ? @project : @merge_request.source_project
-    @commit = @repository.commit(params[:ref]) if params[:ref].present?
-  end
+  def assign_related_issues
+    result = ::MergeRequests::AssignIssuesService.new(project, current_user, merge_request: @merge_request).execute
 
-  def branch_to
-    @target_project = selected_target_project
-    @commit = @target_project.commit(params[:ref]) if params[:ref].present?
-  end
-
-  def update_branches
-    @target_project = selected_target_project
-    @target_branches = @target_project.repository.branch_names
-
-    respond_to do |format|
-      format.js
-    end
-  end
-
-  def ci_status
-    ci_service = @merge_request.source_project.ci_service
-    status = ci_service.commit_status(merge_request.last_commit.sha, merge_request.source_branch)
-
-    if ci_service.respond_to?(:commit_coverage)
-      coverage = ci_service.commit_coverage(merge_request.last_commit.sha, merge_request.source_branch)
+    case result[:count]
+    when 0
+      flash[:error] = "Failed to assign you issues related to the merge request"
+    when 1
+      flash[:notice] = "1 issue has been assigned to you"
+    else
+      flash[:notice] = "#{result[:count]} issues have been assigned to you"
     end
 
-    response = {
-      status: status,
-      coverage: coverage
-    }
-
-    render json: response
+    redirect_to(merge_request_path(@merge_request))
   end
 
-  def toggle_subscription
-    @merge_request.toggle_subscription(current_user)
+  def pipeline_status
+    render json: PipelineSerializer
+      .new(project: @project, current_user: @current_user)
+      .represent_status(@merge_request.head_pipeline)
+  end
 
-    render nothing: true
+  def ci_environments_status
+    environments =
+      begin
+        @merge_request.environments_for(current_user).map do |environment|
+          project = environment.project
+          deployment = environment.first_deployment_for(@merge_request.diff_head_commit)
+
+          stop_url =
+            if environment.stop_action? && can?(current_user, :create_deployment, environment)
+              stop_project_environment_path(project, environment)
+            end
+
+          metrics_url =
+            if can?(current_user, :read_environment, environment) && environment.has_metrics?
+              metrics_project_environment_deployment_path(environment.project, environment, deployment)
+            end
+
+          metrics_monitoring_url =
+            if can?(current_user, :read_environment, environment)
+              environment_metrics_path(environment)
+            end
+
+          {
+            id: environment.id,
+            name: environment.name,
+            url: project_environment_path(project, environment),
+            metrics_url: metrics_url,
+            metrics_monitoring_url: metrics_monitoring_url,
+            stop_url: stop_url,
+            external_url: environment.external_url,
+            external_url_formatted: environment.formatted_external_url,
+            deployed_at: deployment.try(:created_at),
+            deployed_at_formatted: deployment.try(:formatted_deployment_time)
+          }
+        end.compact
+      end
+
+    render json: environments
   end
 
   protected
 
-  def selected_target_project
-    if @project.id.to_s == params[:target_project_id] || @project.forked_project_link.nil?
-      @project
-    else
-      @project.forked_project_link.forked_from_project
-    end
-  end
-
-  def merge_request
-    @merge_request ||= @project.merge_requests.find_by!(iid: params[:id])
-  end
-
-  def closes_issues
-    @closes_issues ||= @merge_request.closes_issues
-  end
+  alias_method :subscribable_resource, :merge_request
+  alias_method :issuable, :merge_request
+  alias_method :awardable, :merge_request
 
   def authorize_update_merge_request!
     return render_404 unless can?(current_user, :update_merge_request, @merge_request)
@@ -230,64 +264,88 @@ class Projects::MergeRequestsController < Projects::ApplicationController
     return render_404 unless can?(current_user, :admin_merge_request, @merge_request)
   end
 
-  def module_enabled
-    return render_404 unless @project.merge_requests_enabled
-  end
-
   def validates_merge_request
-    # If source project was removed (Ex. mr from fork to origin)
-    return invalid_mr unless @merge_request.source_project
-
     # Show git not found page
     # if there is no saved commits between source & target branch
-    if @merge_request.commits.blank?
+    if @merge_request.has_no_commits?
       # and if target branch doesn't exist
       return invalid_mr unless @merge_request.target_branch_exists?
-
-      # or if source branch doesn't exist
-      return invalid_mr unless @merge_request.source_branch_exists?
-    end
-  end
-
-  def define_show_vars
-    @participants = @merge_request.participants(current_user)
-
-    # Build a note object for comment form
-    @note = @project.notes.new(noteable: @merge_request)
-    @notes = @merge_request.mr_and_commit_notes.inc_author.fresh
-    @discussions = Note.discussions_from_notes(@notes)
-    @noteable = @merge_request
-
-    # Get commits from repository
-    # or from cache if already merged
-    @commits = @merge_request.commits
-
-    @merge_request_diff = @merge_request.merge_request_diff
-
-    if @merge_request.locked_long_ago?
-      @merge_request.unlock_mr
-      @merge_request.close
     end
   end
 
   def invalid_mr
-    # Render special view for MR with removed source or target branch
+    # Render special view for MR with removed target branch
     render 'invalid'
   end
 
-  def merge_request_params
-    permitted = params.require(:merge_request).permit(
-      :title, :assignee_id, :source_project_id, :source_branch,
-      :target_project_id, :target_branch, :milestone_id,
-      :state_event, :description, :task_num, label_ids: []
-    )
-    params[:merge_request][:title].strip! if params[:merge_request][:title]
-    permitted
+  def merge_params
+    params.permit(merge_params_attributes)
   end
 
-  # Make sure merge requests created before 8.0
-  # have head file in refs/merge-requests/
-  def ensure_ref_fetched
-    @merge_request.ensure_ref_fetched
+  def merge_params_attributes
+    [:should_remove_source_branch, :commit_message]
+  end
+
+  def merge_when_pipeline_succeeds_active?
+    params[:merge_when_pipeline_succeeds].present? &&
+      @merge_request.head_pipeline && @merge_request.head_pipeline.active?
+  end
+
+  def close_merge_request_without_source_project
+    if !@merge_request.source_project && @merge_request.open?
+      @merge_request.close
+    end
+  end
+
+  private
+
+  def check_if_can_be_merged
+    @merge_request.check_if_can_be_merged
+  end
+
+  def merge!
+    # Disable the CI check if merge_when_pipeline_succeeds is enabled since we have
+    # to wait until CI completes to know
+    unless @merge_request.mergeable?(skip_ci_check: merge_when_pipeline_succeeds_active?)
+      return :failed
+    end
+
+    return :sha_mismatch if params[:sha] != @merge_request.diff_head_sha
+
+    @merge_request.update(merge_error: nil)
+
+    if params[:merge_when_pipeline_succeeds].present?
+      return :failed unless @merge_request.head_pipeline
+
+      if @merge_request.head_pipeline.active?
+        ::MergeRequests::MergeWhenPipelineSucceedsService
+          .new(@project, current_user, merge_params)
+          .execute(@merge_request)
+
+        :merge_when_pipeline_succeeds
+      elsif @merge_request.head_pipeline.success?
+        # This can be triggered when a user clicks the auto merge button while
+        # the tests finish at about the same time
+        @merge_request.merge_async(current_user.id, params)
+
+        :success
+      else
+        :failed
+      end
+    else
+      @merge_request.merge_async(current_user.id, params)
+
+      :success
+    end
+  end
+
+  def serializer
+    MergeRequestSerializer.new(current_user: current_user, project: merge_request.project)
+  end
+
+  def define_edit_vars
+    @source_project = @merge_request.source_project
+    @target_project = @merge_request.target_project
+    @target_branches = @merge_request.target_project.repository.branch_names
   end
 end

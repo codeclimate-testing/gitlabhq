@@ -1,44 +1,84 @@
-# Quick Start
+# Getting started with GitLab CI
 
-To start building projects with GitLab CI a few steps needs to be done.
+>**Note:** Starting from version 8.0, GitLab [Continuous Integration][ci] (CI)
+is fully integrated into GitLab itself and is [enabled] by default on all
+projects.
 
-## 1. Install GitLab and CI
+GitLab offers a [continuous integration][ci] service. If you
+[add a `.gitlab-ci.yml` file][yaml] to the root directory of your repository,
+and configure your GitLab project to use a [Runner], then each commit or
+push, triggers your CI [pipeline].
 
-First you need to have a working GitLab and GitLab CI instance.
+The `.gitlab-ci.yml` file tells the GitLab runner what to do. By default it runs
+a pipeline with three [stages]: `build`, `test`, and `deploy`. You don't need to
+use all three stages; stages with no jobs are simply ignored.
 
-You can omit this step if you use [GitLab.com](https://GitLab.com/).
+If everything runs OK (no non-zero return values), you'll get a nice green
+checkmark associated with the commit. This makes it
+easy to see whether a commit caused any of the tests to fail before
+you even look at the code.
 
-## 2. Create repository on GitLab
+Most projects use GitLab's CI service to run the test suite so that
+developers get immediate feedback if they broke something.
 
-Once you login on your GitLab add a new repository where you will store your source code.
-Push your application to that repository.
+There's a growing trend to use continuous delivery and continuous deployment to
+automatically deploy tested code to staging and production environments.
 
-## 3. Add project to CI
+So in brief, the steps needed to have a working CI can be summed up to:
 
-The next part is to login to GitLab CI.
-Point your browser to the URL you have set GitLab or use [gitlab.com/ci](https://gitlab.com/ci/).
+1. Add `.gitlab-ci.yml` to the root directory of your repository
+1. Configure a Runner
 
-On the first screen you will see a list of GitLab's projects that you have access to:
+From there on, on every push to your Git repository, the Runner will
+automagically start the pipeline and the pipeline will appear under the
+project's **Pipelines** page.
 
-![Projects](projects.png)
+---
 
-Click **Add Project to CI**.
-This will create project in CI and authorize GitLab CI to fetch sources from GitLab.
+This guide assumes that you:
 
-> GitLab CI creates unique token that is used to configure GitLab CI service in GitLab.
-> This token allows to access GitLab's repository and configures GitLab to trigger GitLab CI webhook on **Push events** and **Tag push events**.
-> You can see that token by going to Project's Settings > Services > GitLab CI.
-> You will see there token, the same token is assigned in GitLab CI settings of project.
+- have a working GitLab instance of version 8.0+r or are using
+  [GitLab.com](https://gitlab.com)
+- have a project in GitLab that you would like to use CI for
 
-## 4. Create project's configuration - .gitlab-ci.yml
+Let's break it down to pieces and work on solving the GitLab CI puzzle.
 
-The next: You have to define how your project will be built.
-GitLab CI uses [YAML](https://en.wikipedia.org/wiki/YAML) file to store build configuration.
-You need to create `.gitlab-ci.yml` in root directory of your repository:
+## Creating a `.gitlab-ci.yml` file
+
+Before you create `.gitlab-ci.yml` let's first explain in brief what this is
+all about.
+
+### What is `.gitlab-ci.yml`
+
+The `.gitlab-ci.yml` file is where you configure what CI does with your project.
+It lives in the root of your repository.
+
+On any push to your repository, GitLab will look for the `.gitlab-ci.yml`
+file and start jobs on _Runners_ according to the contents of the file,
+for that commit.
+
+Because `.gitlab-ci.yml` is in the repository and is version controlled, old
+versions still build successfully, forks can easily make use of CI, branches can
+have different pipelines and jobs, and you have a single source of truth for CI.
+You can read more about the reasons why we are using `.gitlab-ci.yml` [in our
+blog about it][blog-ci].
+
+### Creating a simple `.gitlab-ci.yml` file
+
+>**Note:**
+`.gitlab-ci.yml` is a [YAML](https://en.wikipedia.org/wiki/YAML) file
+so you have to pay extra attention to indentation. Always use spaces, not tabs.
+
+You need to create a file named `.gitlab-ci.yml` in the root directory of your
+repository. Below is an example for a Ruby on Rails project.
 
 ```yaml
 before_script:
-  - bundle install
+  - apt-get update -qq && apt-get install -y -qq sqlite3 libsqlite3-dev nodejs
+  - ruby -v
+  - which ruby
+  - gem install bundler --no-ri --no-rdoc
+  - bundle install --jobs $(nproc)  "${FLAGS[@]}"
 
 rspec:
   script:
@@ -49,71 +89,136 @@ rubocop:
     - bundle exec rubocop
 ```
 
-This is the simplest possible build configuration that will work for most Ruby applications:
-1. Define two jobs `rspec` and `rubocop` with two different commands to be executed.
-1. Before every job execute commands defined by `before_script`.
+This is the simplest possible configuration that will work for most Ruby
+applications:
 
-The `.gitlab-ci.yml` defines set of jobs with constrains how and when they should be run.
-The jobs are defined as top-level elements with name and always have to contain the `script`.
-Jobs are used to create builds, which are then picked by [runners](../runners/README.md) and executed within environment of the runner.
-What is important that each job is run independently from each other. 
+1. Define two jobs `rspec` and `rubocop` (the names are arbitrary) with
+   different commands to be executed.
+1. Before every job, the commands defined by `before_script` are executed.
 
-For more information and complete `.gitlab-ci.yml` syntax, please check the [Configuring project (.gitlab-ci.yml)](../yaml/README.md).
+The `.gitlab-ci.yml` file defines sets of jobs with constraints of how and when
+they should be run. The jobs are defined as top-level elements with a name (in
+our case `rspec` and `rubocop`) and always have to contain the `script` keyword.
+Jobs are used to create jobs, which are then picked by
+[Runners](../runners/README.md) and executed within the environment of the Runner.
 
-## 5. Add file and push .gitlab-ci.yml to repository
+What is important is that each job is run independently from each other.
 
-Once you created `.gitlab-ci.yml` you should add it to git repository and push it to GitLab.
+If you want to check whether your `.gitlab-ci.yml` file is valid, there is a
+Lint tool under the page `/ci/lint` of your GitLab instance. You can also find
+a "CI Lint" button to go to this page under **CI/CD ➔ Pipelines** and
+**Pipelines ➔ Jobs** in your project.
+
+For more information and a complete `.gitlab-ci.yml` syntax, please read
+[the reference documentation on .gitlab-ci.yml](../yaml/README.md).
+
+### Push `.gitlab-ci.yml` to GitLab
+
+Once you've created `.gitlab-ci.yml`, you should add it to your Git repository
+and push it to GitLab.
 
 ```bash
 git add .gitlab-ci.yml
-git commit
+git commit -m "Add .gitlab-ci.yml"
 git push origin master
 ```
 
-If you refresh the project's page on GitLab CI you will notice a one new commit:
+Now if you go to the **Pipelines** page you will see that the pipeline is
+pending.
 
-![](new_commit.png)
+You can also go to the **Commits** page and notice the little pause icon next
+to the commit SHA.
 
-However the commit has status **pending** which means that commit was not yet picked by runner.
+![New commit pending](img/new_commit.png)
 
-## 6. Configure runner
+Clicking on it you will be directed to the jobs page for that specific commit.
 
-In GitLab CI, Runners run your builds.
-A runner is a machine (can be virtual, bare-metal or VPS) that picks up builds through the coordinator API of GitLab CI.
+![Single commit jobs page](img/single_commit_status_pending.png)
 
-A runner can be specific to a certain project or serve any project in GitLab CI.
-A runner that serves all projects is called a shared runner.
-More information about different runner types can be found in [Configuring runner](../runners/README.md).
+Notice that there are two jobs pending which are named after what we wrote in
+`.gitlab-ci.yml`. The red triangle indicates that there is no Runner configured
+yet for these jobs.
 
-To check if you have runners assigned to your project go to **Runners**. You will find there information how to setup project specific runner:
+The next step is to configure a Runner so that it picks the pending jobs.
 
-1. Install GitLab Runner software. Checkout the [GitLab Runner](https://about.gitlab.com/gitlab-ci/#gitlab-runner) section to install it.
-1. Specify following URL during runner setup: https://gitlab.com/ci/
-1. Use the following registration token during setup: TOKEN
+## Configuring a Runner
 
-If you do it correctly your runner should be shown under **Runners activated for this project**:
+In GitLab, Runners run the jobs that you define in `.gitlab-ci.yml`. A Runner
+can be a virtual machine, a VPS, a bare-metal machine, a docker container or
+even a cluster of containers. GitLab and the Runners communicate through an API,
+so the only requirement is that the Runner's machine has [Internet] access.
 
-![](runners_activated.png)
+A Runner can be specific to a certain project or serve multiple projects in
+GitLab. If it serves all projects it's called a _Shared Runner_.
 
-### Shared runners
+Find more information about different Runners in the
+[Runners](../runners/README.md) documentation.
 
-If you use [gitlab.com/ci](https://gitlab.com/ci/) you can use **Shared runners** provided by GitLab Inc.
-These are special virtual machines that are run on GitLab's infrastructure that can build any project.
-To enable **Shared runners** you have to go to **Runners** and click **Enable shared runners** for this project.
+You can find whether any Runners are assigned to your project by going to
+**Settings ➔ CI/CD**. Setting up a Runner is easy and straightforward. The
+official Runner supported by GitLab is written in Go and its documentation
+can be found at <https://docs.gitlab.com/runner/>.
 
-## 7. Check status of commit
+In order to have a functional Runner you need to follow two steps:
 
-If everything went OK and you go to commit, the status of the commit should change from **pending** to either **running**, **success** or **failed**.
+1. [Install it][runner-install]
+2. [Configure it](../runners/README.md#registering-a-specific-runner)
 
-![](commit_status.png)
+Follow the links above to set up your own Runner or use a Shared Runner as
+described in the next section.
 
-You can click **Build ID** to view build log for specific job.
+Once the Runner has been set up, you should see it on the Runners page of your
+project, following **Settings ➔ CI/CD**.
 
-## 8. Congratulations!
+![Activated runners](img/runners_activated.png)
 
-You managed to build your first project using GitLab CI.
-You may need to tune your `.gitlab-ci.yml` file to implement build plan for your project.
-A few examples how it can be done you can find on [Examples](../examples/README.md) page.
+### Shared Runners
 
-GitLab CI also offers **the Lint** tool to verify validity of your `.gitlab-ci.yml` which can be useful to troubleshoot potential problems.
-The Lint is available from project's settings or by adding `/lint` to GitLab CI url.
+If you use [GitLab.com](https://gitlab.com/) you can use the **Shared Runners**
+provided by GitLab Inc.
+
+These are special virtual machines that run on GitLab's infrastructure and can
+build any project.
+
+To enable the **Shared Runners** you have to go to your project's
+**Settings ➔ CI/CD** and click **Enable shared runners**.
+
+[Read more on Shared Runners](../runners/README.md).
+
+## Seeing the status of your pipeline and jobs
+
+After configuring the Runner successfully, you should see the status of your
+last commit change from _pending_ to either _running_, _success_ or _failed_.
+
+You can view all pipelines by going to the **Pipelines** page in your project.
+
+![Commit status](img/pipelines_status.png)
+
+Or you can view all jobs, by going to the **Pipelines ➔ Jobs** page.
+
+![Commit status](img/builds_status.png)
+
+By clicking on a job's status, you will be able to see the log of that job.
+This is important to diagnose why a job failed or acted differently than
+you expected.
+
+![Build log](img/build_log.png)
+
+You are also able to view the status of any commit in the various pages in
+GitLab, such as **Commits** and **Merge requests**.
+
+## Examples
+
+Visit the [examples README][examples] to see a list of examples using GitLab
+CI with various languages.
+
+[runner-install]: https://docs.gitlab.com/runner/install/
+[blog-ci]: https://about.gitlab.com/2015/05/06/why-were-replacing-gitlab-ci-jobs-with-gitlab-ci-dot-yml/
+[examples]: ../examples/README.md
+[ci]: https://about.gitlab.com/gitlab-ci/
+[yaml]: ../yaml/README.md
+[runner]: ../runners/README.md
+[enabled]: ../enable_or_disable_ci.md
+[stages]: ../yaml/README.md#stages
+[pipeline]: ../pipelines.md
+[internet]: https://about.gitlab.com/images/theinternet.png

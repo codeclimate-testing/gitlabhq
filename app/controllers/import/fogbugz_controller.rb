@@ -5,7 +5,6 @@ class Import::FogbugzController < Import::BaseController
   rescue_from Fogbugz::AuthenticationException, with: :fogbugz_unauthorized
 
   def new
-
   end
 
   def callback
@@ -22,7 +21,6 @@ class Import::FogbugzController < Import::BaseController
   end
 
   def new_user_map
-
   end
 
   def create_user_map
@@ -31,7 +29,7 @@ class Import::FogbugzController < Import::BaseController
     unless user_map.is_a?(Hash) && user_map.all? { |k, v| !v[:name].blank? }
       flash.now[:alert] = 'All users must have a name.'
 
-      render 'new_user_map' and return
+      return render 'new_user_map'
     end
 
     session[:fogbugz_user_map] = user_map

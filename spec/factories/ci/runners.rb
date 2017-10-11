@@ -1,38 +1,30 @@
-# == Schema Information
-#
-# Table name: runners
-#
-#  id           :integer          not null, primary key
-#  token        :string(255)
-#  created_at   :datetime
-#  updated_at   :datetime
-#  description  :string(255)
-#  contacted_at :datetime
-#  active       :boolean          default(TRUE), not null
-#  is_shared    :boolean          default(FALSE)
-#  name         :string(255)
-#  version      :string(255)
-#  revision     :string(255)
-#  platform     :string(255)
-#  architecture :string(255)
-#
-
-# Read about factories at https://github.com/thoughtbot/factory_girl
-
 FactoryGirl.define do
   factory :ci_runner, class: Ci::Runner do
-    sequence :description do |n|
-      "My runner#{n}"
+    sequence(:description) { |n| "My runner#{n}" }
+
+    platform  "darwin"
+    is_shared false
+    active    true
+    access_level :not_protected
+
+    trait :online do
+      contacted_at Time.now
     end
 
-    platform "darwin"
-
-    factory :ci_shared_runner do
+    trait :shared do
       is_shared true
     end
 
-    factory :ci_specific_runner do
+    trait :specific do
       is_shared false
+    end
+
+    trait :inactive do
+      active false
+    end
+
+    trait :ref_protected do
+      access_level :ref_protected
     end
   end
 end

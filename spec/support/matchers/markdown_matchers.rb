@@ -13,11 +13,11 @@ module MarkdownMatchers
     set_default_markdown_messages
 
     match do |actual|
-      link  = actual.at_css('a:contains("Relative Link")')
+      link = actual.at_css('a:contains("Relative Link")')
       image = actual.at_css('img[alt="Relative Image"]')
 
       expect(link['href']).to end_with('master/doc/README.md')
-      expect(image['src']).to end_with('master/app/assets/images/touch-icon-ipad.png')
+      expect(image['data-src']).to end_with('master/app/assets/images/touch-icon-ipad.png')
     end
   end
 
@@ -26,10 +26,11 @@ module MarkdownMatchers
     set_default_markdown_messages
 
     match do |actual|
-      expect(actual).to have_selector('img.emoji', count: 10)
+      expect(actual).to have_selector('gl-emoji', count: 10)
 
-      image = actual.at_css('img.emoji')
-      expect(image['src'].to_s).to start_with(Gitlab.config.gitlab.url + '/assets')
+      emoji_element = actual.at_css('gl-emoji')
+      expect(emoji_element['data-name'].to_s).not_to be_empty
+      expect(emoji_element['data-unicode-version'].to_s).not_to be_empty
     end
   end
 
@@ -38,9 +39,9 @@ module MarkdownMatchers
     set_default_markdown_messages
 
     match do |actual|
-      expect(actual).to have_selector('h1 a#gitlab-markdown')
-      expect(actual).to have_selector('h2 a#markdown')
-      expect(actual).to have_selector('h3 a#autolinkfilter')
+      expect(actual).to have_selector('h1 a#user-content-gitlab-markdown')
+      expect(actual).to have_selector('h2 a#user-content-markdown')
+      expect(actual).to have_selector('h3 a#user-content-autolinkfilter')
     end
   end
 
@@ -66,12 +67,31 @@ module MarkdownMatchers
     end
   end
 
+  # GollumTagsFilter
+  matcher :parse_gollum_tags do
+    def have_image(src)
+      have_css("img[data-src$='#{src}']")
+    end
+
+    prefix = '/namespace1/gitlabhq/wikis'
+    set_default_markdown_messages
+
+    match do |actual|
+      expect(actual).to have_link('linked-resource', href: "#{prefix}/linked-resource")
+      expect(actual).to have_link('link-text', href: "#{prefix}/linked-resource")
+      expect(actual).to have_link('http://example.com', href: 'http://example.com')
+      expect(actual).to have_link('link-text', href: 'http://example.com/pdfs/gollum.pdf')
+      expect(actual).to have_image("#{prefix}/images/example.jpg")
+      expect(actual).to have_image('http://example.com/images/example.jpg')
+    end
+  end
+
   # UserReferenceFilter
   matcher :reference_users do
     set_default_markdown_messages
 
     match do |actual|
-      expect(actual).to have_selector('a.gfm.gfm-project_member', count: 3)
+      expect(actual).to have_selector('a.gfm.gfm-project_member', count: 4)
     end
   end
 
@@ -80,7 +100,7 @@ module MarkdownMatchers
     set_default_markdown_messages
 
     match do |actual|
-      expect(actual).to have_selector('a.gfm.gfm-issue', count: 3)
+      expect(actual).to have_selector('a.gfm.gfm-issue', count: 6)
     end
   end
 
@@ -89,7 +109,7 @@ module MarkdownMatchers
     set_default_markdown_messages
 
     match do |actual|
-      expect(actual).to have_selector('a.gfm.gfm-merge_request', count: 3)
+      expect(actual).to have_selector('a.gfm.gfm-merge_request', count: 6)
       expect(actual).to have_selector('em a.gfm-merge_request')
     end
   end
@@ -99,7 +119,7 @@ module MarkdownMatchers
     set_default_markdown_messages
 
     match do |actual|
-      expect(actual).to have_selector('a.gfm.gfm-snippet', count: 2)
+      expect(actual).to have_selector('a.gfm.gfm-snippet', count: 5)
     end
   end
 
@@ -108,7 +128,7 @@ module MarkdownMatchers
     set_default_markdown_messages
 
     match do |actual|
-      expect(actual).to have_selector('a.gfm.gfm-commit_range', count: 2)
+      expect(actual).to have_selector('a.gfm.gfm-commit_range', count: 5)
     end
   end
 
@@ -117,7 +137,7 @@ module MarkdownMatchers
     set_default_markdown_messages
 
     match do |actual|
-      expect(actual).to have_selector('a.gfm.gfm-commit', count: 2)
+      expect(actual).to have_selector('a.gfm.gfm-commit', count: 5)
     end
   end
 
@@ -126,7 +146,16 @@ module MarkdownMatchers
     set_default_markdown_messages
 
     match do |actual|
-      expect(actual).to have_selector('a.gfm.gfm-label', count: 3)
+      expect(actual).to have_selector('a.gfm.gfm-label', count: 4)
+    end
+  end
+
+  # MilestoneReferenceFilter
+  matcher :reference_milestones do
+    set_default_markdown_messages
+
+    match do |actual|
+      expect(actual).to have_selector('a.gfm.gfm-milestone', count: 8)
     end
   end
 
@@ -138,6 +167,27 @@ module MarkdownMatchers
       expect(actual).to have_selector('ul.task-list', count: 2)
       expect(actual).to have_selector('li.task-list-item', count: 7)
       expect(actual).to have_selector('input[checked]', count: 3)
+    end
+  end
+
+  # InlineDiffFilter
+  matcher :parse_inline_diffs do
+    set_default_markdown_messages
+
+    match do |actual|
+      expect(actual).to have_selector('span.idiff.addition', count: 2)
+      expect(actual).to have_selector('span.idiff.deletion', count: 2)
+    end
+  end
+
+  # VideoLinkFilter
+  matcher :parse_video_links do
+    set_default_markdown_messages
+
+    match do |actual|
+      video = actual.at_css('video')
+
+      expect(video['src']).to end_with('/assets/videos/gitlab-demo.mp4')
     end
   end
 end

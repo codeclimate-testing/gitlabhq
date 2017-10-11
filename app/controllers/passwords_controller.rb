@@ -1,6 +1,6 @@
 class PasswordsController < Devise::PasswordsController
   before_action :resource_from_email, only: [:create]
-  before_action :prevent_ldap_reset,  only: [:create]
+  before_action :prevent_ldap_reset, only: [:create]
   before_action :throttle_reset,      only: [:create]
 
   def edit
@@ -23,6 +23,14 @@ class PasswordsController < Devise::PasswordsController
     end
   end
 
+  def update
+    super do |resource|
+      if resource.valid? && resource.require_password_creation?
+        resource.update_attribute(:password_automatically_set, false)
+      end
+    end
+  end
+
   protected
 
   def resource_from_email
@@ -31,7 +39,7 @@ class PasswordsController < Devise::PasswordsController
   end
 
   def prevent_ldap_reset
-    return unless resource && resource.ldap_user?
+    return unless resource&.ldap_user?
 
     redirect_to after_sending_reset_password_instructions_path_for(resource_name),
       alert: "Cannot reset password for LDAP user."
@@ -40,7 +48,9 @@ class PasswordsController < Devise::PasswordsController
   def throttle_reset
     return unless resource && resource.recently_sent_password_reset?
 
-    redirect_to new_password_path(resource_name),
-      alert: I18n.t('devise.passwords.recently_reset')
+    # Throttle reset attempts, but return a normal message to
+    # avoid user enumeration attack.
+    redirect_to new_user_session_path,
+      notice: I18n.t('devise.passwords.send_paranoid_instructions')
   end
 end

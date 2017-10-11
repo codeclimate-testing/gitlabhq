@@ -27,6 +27,19 @@ module CapybaraHelpers
       end
     end
   end
+
+  # Refresh the page. Calling `visit current_url` doesn't seem to work consistently.
+  #
+  def refresh
+    url = current_url
+    visit 'about:blank'
+    visit url
+  end
+
+  # Simulate a browser restart by clearing the session cookie.
+  def clear_browser_session
+    page.driver.remove_cookie('_gitlab_session')
+  end
 end
 
 RSpec.configure do |config|

@@ -1,9 +1,15 @@
 module AuthHelper
-  PROVIDERS_WITH_ICONS = %w(twitter github gitlab bitbucket google_oauth2 facebook).freeze
+  include Gitlab::CurrentSettings
+
+  PROVIDERS_WITH_ICONS = %w(twitter github gitlab bitbucket google_oauth2 facebook azure_oauth2 authentiq).freeze
   FORM_BASED_PROVIDERS = [/\Aldap/, 'crowd'].freeze
 
   def ldap_enabled?
-    Gitlab.config.ldap.enabled
+    Gitlab::LDAP::Config.enabled?
+  end
+
+  def omniauth_enabled?
+    Gitlab.config.omniauth.enabled
   end
 
   def provider_has_icon?(name)
@@ -34,6 +40,16 @@ module AuthHelper
     auth_providers.reject { |provider| form_based_provider?(provider) }
   end
 
+  def enabled_button_based_providers
+    disabled_providers = current_application_settings.disabled_oauth_sign_in_sources || []
+
+    button_based_providers.map(&:to_s) - disabled_providers
+  end
+
+  def button_based_providers_enabled?
+    enabled_button_based_providers.any?
+  end
+
   def provider_image_tag(provider, size = 64)
     label = label_for_provider(provider)
 
@@ -48,6 +64,10 @@ module AuthHelper
 
   def auth_active?(provider)
     current_user.identities.exists?(provider: provider.to_s)
+  end
+
+  def unlink_allowed?(provider)
+    %w(saml cas3).exclude?(provider.to_s)
   end
 
   extend self

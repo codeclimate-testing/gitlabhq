@@ -5,29 +5,28 @@ module Projects
     end
 
     def execute
+      if @params[:template_name]&.present?
+        return ::Projects::CreateFromTemplateService.new(current_user, params).execute
+      end
+
       forked_from_project_id = params.delete(:forked_from_project_id)
+      import_data = params.delete(:import_data)
+      @skip_wiki = params.delete(:skip_wiki)
 
       @project = Project.new(params)
 
-      # Make sure that the user is allowed to use the specified visibility
-      # level
-      unless Gitlab::VisibilityLevel.allowed_for?(current_user,
-                                                  params[:visibility_level])
+      # Make sure that the user is allowed to use the specified visibility level
+      unless Gitlab::VisibilityLevel.allowed_for?(current_user, @project.visibility_level)
         deny_visibility_level(@project)
         return @project
       end
 
-      # Set project name from path
-      if @project.name.present? && @project.path.present?
-        # if both name and path set - everything is ok
-      elsif @project.path.present?
-        # Set project name from path
-        @project.name = @project.path.dup
-      elsif @project.name.present?
-        # For compatibility - set path from name
-        # TODO: remove this in 8.0
-        @project.path = @project.name.dup.parameterize
+      unless allowed_fork?(forked_from_project_id)
+        @project.errors.add(:forked_from_project_id, 'is forbidden')
+        return @project
       end
+
+      set_project_name_from_path
 
       # get namespace id
       namespace_id = params[:namespace_id]
@@ -45,32 +44,43 @@ module Projects
         @project.namespace_id = current_user.namespace_id
       end
 
+      yield(@project) if block_given?
+
       @project.creator = current_user
 
       if forked_from_project_id
         @project.build_forked_project_link(forked_from_project_id: forked_from_project_id)
       end
 
-      Project.transaction do
-        @project.save
-
-        if @project.persisted? && !@project.import?
-          raise 'Failed to create repository' unless @project.create_repository
-        end
-      end
+      save_project_and_import_data(import_data)
 
       after_create_actions if @project.persisted?
 
+      if @project.errors.empty?
+        @project.import_schedule if @project.import?
+      else
+        fail(error: @project.errors.full_messages.join(', '))
+      end
+
       @project
-    rescue
-      @project.errors.add(:base, "Can't save project. Please try again later")
-      @project
+    rescue ActiveRecord::RecordInvalid => e
+      message = "Unable to save #{e.record.type}: #{e.record.errors.full_messages.join(", ")} "
+      fail(error: message)
+    rescue => e
+      fail(error: e.message)
     end
 
     protected
 
     def deny_namespace
       @project.errors.add(:namespace, "is not valid")
+    end
+
+    def allowed_fork?(source_project_id)
+      return true if source_project_id.nil?
+
+      source_project = Project.find_by(id: source_project_id)
+      current_user.can?(:fork_project, source_project)
     end
 
     def allowed_namespace?(user, namespace_id)
@@ -81,21 +91,77 @@ module Projects
     def after_create_actions
       log_info("#{@project.owner.name} created a new project \"#{@project.name_with_namespace}\"")
 
-      @project.create_wiki if @project.wiki_enabled?
+      unless @project.gitlab_project_import?
+        @project.create_wiki unless skip_wiki?
+        create_services_from_active_templates(@project)
 
-      @project.build_missing_services
-
-      @project.create_labels
+        @project.create_labels
+      end
 
       event_service.create_project(@project, current_user)
       system_hook_service.execute_hooks_for(@project, :create)
 
-      unless @project.group
-        @project.team << [current_user, :master, current_user]
+      setup_authorizations
+    end
+
+    # Refresh the current user's authorizations inline (so they can access the
+    # project immediately after this request completes), and any other affected
+    # users in the background
+    def setup_authorizations
+      if @project.group
+        @project.group.refresh_members_authorized_projects(blocking: false)
+        current_user.refresh_authorized_projects
+      else
+        @project.add_master(@project.namespace.owner, current_user: current_user)
+      end
+    end
+
+    def skip_wiki?
+      !@project.feature_available?(:wiki, current_user) || @skip_wiki
+    end
+
+    def save_project_and_import_data(import_data)
+      Project.transaction do
+        @project.create_or_update_import_data(data: import_data[:data], credentials: import_data[:credentials]) if import_data
+
+        if @project.save && !@project.import?
+          raise 'Failed to create repository' unless @project.create_repository
+        end
+      end
+    end
+
+    def fail(error:)
+      message = "Unable to save project. Error: #{error}"
+      message << "Project ID: #{@project.id}" if @project && @project.id
+
+      Rails.logger.error(message)
+
+      if @project && @project.import?
+        @project.errors.add(:base, message)
+        @project.mark_import_as_failed(message)
       end
 
-      if @project.import?
-        @project.import_start
+      @project
+    end
+
+    def create_services_from_active_templates(project)
+      Service.where(template: true, active: true).each do |template|
+        service = Service.build_from_template(project.id, template)
+        service.save!
+      end
+    end
+
+    def set_project_name_from_path
+      # Set project name from path
+      if @project.name.present? && @project.path.present?
+        # if both name and path set - everything is ok
+      elsif @project.path.present?
+        # Set project name from path
+        @project.name = @project.path.dup
+      elsif @project.name.present?
+        # For compatibility - set path from name
+        # TODO: remove this in 8.0
+        @project.path = @project.name.dup.parameterize
       end
     end
   end

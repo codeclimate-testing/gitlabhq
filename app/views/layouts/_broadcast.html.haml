@@ -1,4 +1,2 @@
-- if broadcast_message.present?
-  .broadcast-message{ style: broadcast_styling(broadcast_message) }
-    %i.fa.fa-bullhorn
-    = broadcast_message.message
+- BroadcastMessage.current&.each do |message|
+  = broadcast_message(message)

@@ -2,52 +2,57 @@
 #
 # Not to be confused with CommitsController, plural.
 class Projects::CommitController < Projects::ApplicationController
+  include RendersNotes
+  include CreatesCommit
+  include DiffForPath
+  include DiffHelper
+
   # Authorize
   before_action :require_non_empty_project
-  before_action :authorize_download_code!, except: [:cancel_builds]
-  before_action :authorize_manage_builds!, only: [:cancel_builds]
+  before_action :authorize_download_code!
+  before_action :authorize_read_pipeline!, only: [:pipelines]
   before_action :commit
-  before_action :authorize_manage_builds!, only: [:cancel_builds, :retry_builds]
-  before_action :define_show_vars, only: [:show, :builds]
+  before_action :define_commit_vars, only: [:show, :diff_for_path, :pipelines]
+  before_action :define_note_vars, only: [:show, :diff_for_path]
+  before_action :authorize_edit_tree!, only: [:revert, :cherry_pick]
 
   def show
-    return git_not_found! unless @commit
-
-    @line_notes = commit.notes.inline
-    @note = @project.build_commit_note(commit)
-    @notes = commit.notes.not_inline.fresh
-    @noteable = @commit
-    @comments_allowed = @reply_allowed = true
-    @comments_target  = {
-      noteable_type: 'Commit',
-      commit_id: @commit.id
-    }
+    apply_diff_view_cookie!
 
     respond_to do |format|
-      format.html
+      format.html do
+        # n+1: https://gitlab.com/gitlab-org/gitlab-ce/issues/37599
+        Gitlab::GitalyClient.allow_n_plus_1_calls do
+          render
+        end
+      end
       format.diff  { render text: @commit.to_diff }
       format.patch { render text: @commit.to_patch }
     end
   end
 
-  def builds
-    @ci_project = @project.gitlab_ci_project
+  def diff_for_path
+    render_diff_for_path(@commit.diffs(diff_options))
   end
 
-  def cancel_builds
-    ci_commit.builds.running_or_pending.each(&:cancel)
+  def pipelines
+    @pipelines = @commit.pipelines.order(id: :desc)
 
-    redirect_to builds_namespace_project_commit_path(project.namespace, project, commit.sha)
-  end
+    respond_to do |format|
+      format.html
+      format.json do
+        Gitlab::PollingInterval.set_header(response, interval: 10_000)
 
-  def retry_builds
-    ci_commit.builds.latest.failed.each do |build|
-      if build.retryable?
-        Ci::Build.retry(build)
+        render json: {
+          pipelines: PipelineSerializer
+            .new(project: @project, current_user: @current_user)
+            .represent(@pipelines),
+          count: {
+            all: @pipelines.count
+          }
+        }
       end
     end
-
-    redirect_to builds_namespace_project_commit_path(project.namespace, project, commit.sha)
   end
 
   def branches
@@ -56,26 +61,82 @@ class Projects::CommitController < Projects::ApplicationController
     render layout: false
   end
 
+  def revert
+    assign_change_commit_vars
+
+    return render_404 if @start_branch.blank?
+
+    @branch_name = create_new_branch? ? @commit.revert_branch_name : @start_branch
+
+    create_commit(Commits::RevertService, success_notice: "The #{@commit.change_type_title(current_user)} has been successfully reverted.",
+                                          success_path: -> { successful_change_path }, failure_path: failed_change_path)
+  end
+
+  def cherry_pick
+    assign_change_commit_vars
+
+    return render_404 if @start_branch.blank?
+
+    @branch_name = create_new_branch? ? @commit.cherry_pick_branch_name : @start_branch
+
+    create_commit(Commits::CherryPickService, success_notice: "The #{@commit.change_type_title(current_user)} has been successfully cherry-picked.",
+                                              success_path: -> { successful_change_path }, failure_path: failed_change_path)
+  end
+
   private
 
-  def commit
-    @commit ||= @project.commit(params[:id])
+  def create_new_branch?
+    params[:create_merge_request].present? || !can?(current_user, :push_code, @project)
   end
 
-  def ci_commit
-    @ci_commit ||= project.ci_commit(commit.sha)
+  def successful_change_path
+    referenced_merge_request_url || project_commits_url(@project, @branch_name)
   end
 
-  def define_show_vars
-    @diffs = commit.diffs
-    @notes_count = commit.notes.count
-    
-    @builds = ci_commit.builds if ci_commit
+  def failed_change_path
+    referenced_merge_request_url || project_commit_url(@project, params[:id])
   end
 
-  def authorize_manage_builds!
-    unless can?(current_user, :manage_builds, project)
-      return page_404
+  def referenced_merge_request_url
+    if merge_request = @commit.merged_merge_request(current_user)
+      project_merge_request_url(merge_request.target_project, merge_request)
     end
+  end
+
+  def commit
+    @noteable = @commit ||= @project.commit(params[:id])
+  end
+
+  def define_commit_vars
+    return git_not_found! unless commit
+
+    opts = diff_options
+    opts[:ignore_whitespace_change] = true if params[:format] == 'diff'
+
+    @diffs = commit.diffs(opts)
+    @notes_count = commit.notes.count
+
+    @environment = EnvironmentsFinder.new(@project, current_user, commit: @commit).execute.last
+  end
+
+  def define_note_vars
+    @noteable = @commit
+    @note = @project.build_commit_note(commit)
+
+    @new_diff_note_attrs = {
+      noteable_type: 'Commit',
+      commit_id: @commit.id
+    }
+
+    @grouped_diff_discussions = commit.grouped_diff_discussions
+    @discussions = commit.discussions
+
+    @notes = (@grouped_diff_discussions.values.flatten + @discussions).flat_map(&:notes)
+    @notes = prepare_notes_for_rendering(@notes, @commit)
+  end
+
+  def assign_change_commit_vars
+    @start_branch = params[:start_branch]
+    @commit_params = { commit: @commit }
   end
 end

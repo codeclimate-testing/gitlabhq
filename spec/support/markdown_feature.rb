@@ -23,9 +23,17 @@ class MarkdownFeature
   # Direct references ----------------------------------------------------------
 
   def project
-    @project ||= create(:project).tap do |project|
+    @project ||= create(:project, :repository, group: group).tap do |project|
       project.team << [user, :master]
     end
+  end
+
+  def project_wiki
+    @project_wiki ||= ProjectWiki.new(project, user)
+  end
+
+  def project_wiki_page
+    @project_wiki_page ||= build(:wiki_page, wiki: project_wiki)
   end
 
   def issue
@@ -59,12 +67,24 @@ class MarkdownFeature
     @label ||= create(:label, name: 'awaiting feedback', project: project)
   end
 
+  def simple_milestone
+    @simple_milestone ||= create(:milestone, name: 'gfm-milestone', project: project)
+  end
+
+  def milestone
+    @milestone ||= create(:milestone, name: 'next goal', project: project)
+  end
+
+  def group_milestone
+    @group_milestone ||= create(:milestone, name: 'group-milestone', group: group)
+  end
+
   # Cross-references -----------------------------------------------------------
 
   def xproject
     @xproject ||= begin
-      namespace = create(:namespace, name: 'cross-reference')
-      create(:project, namespace: namespace) do |project|
+      group = create(:group, :nested)
+      create(:project, :repository, namespace: group) do |project|
         project.team << [user, :developer]
       end
     end
@@ -91,6 +111,14 @@ class MarkdownFeature
       xcommit2 = xproject.commit('HEAD~2')
       CommitRange.new("#{xcommit.id}...#{xcommit2.id}", xproject)
     end
+  end
+
+  def xmilestone
+    @xmilestone ||= create(:milestone, project: xproject)
+  end
+
+  def urls
+    Gitlab::Routing.url_helpers
   end
 
   def raw_markdown

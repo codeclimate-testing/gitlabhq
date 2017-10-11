@@ -8,28 +8,12 @@ class Projects::BlameController < Projects::ApplicationController
 
   def show
     @blob = @repository.blob_at(@commit.id, @path)
-    @blame = group_blame_lines
-  end
 
-  def group_blame_lines
-    blame = Gitlab::Git::Blame.new(@repository, @commit.id, @path)
+    return render_404 unless @blob
 
-    prev_sha = nil
-    groups = []
-    current_group = nil
+    environment_params = @repository.branch_exists?(@ref) ? { ref: @ref } : { commit: @commit }
+    @environment = EnvironmentsFinder.new(@project, current_user, environment_params).execute.last
 
-    blame.each do |commit, line|
-      if prev_sha && prev_sha == commit.sha
-        current_group[:lines] << line
-      else
-        groups << current_group if current_group.present?
-        current_group = { commit: commit, lines: [line] }
-      end
-
-      prev_sha = commit.sha
-    end
-
-    groups << current_group if current_group.present?
-    groups
+    @blame_groups = Gitlab::Blame.new(@blob, @commit).groups
   end
 end

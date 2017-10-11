@@ -19,7 +19,7 @@ something else descriptive.
 
 1. Enter the address of your GitLab installation at the bottom of the package
 
-    ![Facebook Website URL](facebook_website_url.png)
+    ![Facebook Website URL](img/facebook_website_url.png)
 
 1. Choose "Next"
 
@@ -29,7 +29,7 @@ something else descriptive.
 
 1. Fill in a contact email for your app
 
-    ![Facebook App Settings](facebook_app_settings.png)
+    ![Facebook App Settings](img/facebook_app_settings.png)
 
 1. Choose "Save Changes"
 
@@ -45,7 +45,7 @@ something else descriptive.
 
 1. You should now see an app key and app secret (see screenshot). Keep this page open as you continue configuration.
 
-    ![Facebook API Keys](facebook_api_keys.png)
+    ![Facebook API Keys](img/facebook_api_keys.png)
 
 1.  On your GitLab server, open the configuration file.
 
@@ -92,6 +92,10 @@ something else descriptive.
 
 1.  Save the configuration file.
 
-1.  Restart GitLab for the changes to take effect.
+1.  [Reconfigure][] or [restart GitLab][] for the changes to take effect if you
+    installed GitLab via Omnibus or from source respectively.
 
 On the sign in page there should now be a Facebook icon below the regular sign in form. Click the icon to begin the authentication process. Facebook will ask the user to sign in and authorize the GitLab application. If everything goes well the user will be returned to GitLab and will be signed in.
+
+[reconfigure]: ../administration/restart_gitlab.md#omnibus-gitlab-reconfigure
+[restart GitLab]: ../administration/restart_gitlab.md#installations-from-source

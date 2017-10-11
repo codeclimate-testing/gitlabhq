@@ -1,22 +1,20 @@
 = form_for [:admin, @label], html: { class: 'form-horizontal label-form js-requires-input' } do |f|
-  -if @label.errors.any?
-    .row
-      .col-sm-offset-2.col-sm-10
-        .alert.alert-danger
-          - @label.errors.full_messages.each do |msg|
-            %span= msg
-            %br
+  = form_errors(@label)
 
   .form-group
     = f.label :title, class: 'control-label'
     .col-sm-10
       = f.text_field :title, class: "form-control", required: true
   .form-group
-    = f.label :color, "Background Color", class: 'control-label'
+    = f.label :description, class: 'control-label'
+    .col-sm-10
+      = f.text_field :description, class: "form-control js-quick-submit"
+  .form-group
+    = f.label :color, "Background color", class: 'control-label'
     .col-sm-10
       .input-group
         .input-group-addon.label-color-preview &nbsp;
-        = f.color_field :color, class: "form-control"
+        = f.text_field :color, class: "form-control"
       .help-block
         Choose any color.
         %br
@@ -30,6 +28,3 @@
   .form-actions
     = f.submit 'Save', class: 'btn btn-save js-save-button'
     = link_to "Cancel", admin_labels_path, class: 'btn btn-cancel'
-
-:javascript
-  new Labels();

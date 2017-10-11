@@ -1,33 +1,21 @@
-# == Schema Information
-#
-# Table name: sent_notifications
-#
-#  id            :integer          not null, primary key
-#  project_id    :integer
-#  noteable_id   :integer
-#  noteable_type :string(255)
-#  recipient_id  :integer
-#  commit_id     :string(255)
-#  line_code     :string(255)
-#  reply_key     :string(255)      not null
-#
-
 class SentNotification < ActiveRecord::Base
+  serialize :position, Gitlab::Diff::Position # rubocop:disable Cop/ActiveRecordSerialize
+
   belongs_to :project
-  belongs_to :noteable, polymorphic: true
+  belongs_to :noteable, polymorphic: true # rubocop:disable Cop/PolymorphicAssociations
   belongs_to :recipient, class_name: "User"
 
-  validate :project, :recipient, :reply_key, presence: true
-  validate :reply_key, uniqueness: true
-
+  validates :project, :recipient, presence: true
+  validates :reply_key, presence: true, uniqueness: true
   validates :noteable_id, presence: true, unless: :for_commit?
   validates :commit_id, presence: true, if: :for_commit?
-  validates :line_code, format: { with: /\A[a-z0-9]+_\d+_\d+\Z/ }, allow_blank: true
+  validates :in_reply_to_discussion_id, format: { with: /\A\h{40}\z/, allow_nil: true }
+  validate :note_valid
+
+  after_save :keep_around_commit
 
   class << self
     def reply_key
-      return nil unless Gitlab::IncomingEmail.enabled?
-
       SecureRandom.hex(16)
     end
 
@@ -35,9 +23,7 @@ class SentNotification < ActiveRecord::Base
       find_by(reply_key: reply_key)
     end
 
-    def record(noteable, recipient_id, reply_key, params = {})
-      return unless reply_key
-
+    def record(noteable, recipient_id, reply_key = self.reply_key, attrs = {})
       noteable_id = nil
       commit_id = nil
       if noteable.is_a?(Commit)
@@ -46,23 +32,28 @@ class SentNotification < ActiveRecord::Base
         noteable_id = noteable.id
       end
 
-      params.reverse_merge!(
-        project:        noteable.project,
-        noteable_type:  noteable.class.name,
-        noteable_id:    noteable_id,
-        commit_id:      commit_id,
-        recipient_id:   recipient_id,
-        reply_key:      reply_key
+      attrs.reverse_merge!(
+        project: noteable.project,
+        recipient_id: recipient_id,
+        reply_key: reply_key,
+
+        noteable_type: noteable.class.name,
+        noteable_id: noteable_id,
+        commit_id: commit_id
       )
 
-      create(params)
+      create(attrs)
     end
 
-    def record_note(note, recipient_id, reply_key, params = {})
-      params[:line_code] = note.line_code
-      
-      record(note.noteable, recipient_id, reply_key, params)
+    def record_note(note, recipient_id, reply_key = self.reply_key, attrs = {})
+      attrs[:in_reply_to_discussion_id] = note.discussion_id
+
+      record(note.noteable, recipient_id, reply_key, attrs)
     end
+  end
+
+  def unsubscribable?
+    !for_commit?
   end
 
   def for_commit?
@@ -75,5 +66,67 @@ class SentNotification < ActiveRecord::Base
     else
       super
     end
+  end
+
+  def position=(new_position)
+    if new_position.is_a?(String)
+      new_position = JSON.parse(new_position) rescue nil
+    end
+
+    if new_position.is_a?(Hash)
+      new_position = new_position.with_indifferent_access
+      new_position = Gitlab::Diff::Position.new(new_position)
+    end
+
+    super(new_position)
+  end
+
+  def to_param
+    self.reply_key
+  end
+
+  def create_reply(message, dryrun: false)
+    klass = dryrun ? Notes::BuildService : Notes::CreateService
+    klass.new(self.project, self.recipient, reply_params.merge(note: message)).execute
+  end
+
+  private
+
+  def reply_params
+    attrs = {
+      noteable_type: self.noteable_type,
+      noteable_id: self.noteable_id,
+      commit_id: self.commit_id
+    }
+
+    if self.in_reply_to_discussion_id.present?
+      attrs[:in_reply_to_discussion_id] = self.in_reply_to_discussion_id
+    else
+      # Remove in GitLab 10.0, when we will not support replying to SentNotifications
+      # that don't have `in_reply_to_discussion_id` anymore.
+      attrs.merge!(
+        type: self.note_type,
+
+        # LegacyDiffNote
+        line_code: self.line_code,
+
+        # DiffNote
+        position: self.position.to_json
+      )
+    end
+
+    attrs
+  end
+
+  def note_valid
+    note = create_reply('Test', dryrun: true)
+
+    unless note.valid?
+      self.errors.add(:base, "Note parameters are invalid: #{note.errors.full_messages.to_sentence}")
+    end
+  end
+
+  def keep_around_commit
+    project.repository.keep_around(self.commit_id)
   end
 end

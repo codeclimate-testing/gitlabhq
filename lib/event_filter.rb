@@ -2,8 +2,8 @@ class EventFilter
   attr_accessor :params
 
   class << self
-    def default_filter
-      %w{ push issues merge_requests team}
+    def all
+      'all'
     end
 
     def push
@@ -12,6 +12,10 @@ class EventFilter
 
     def merged
       'merged'
+    end
+
+    def issue
+      'issue'
     end
 
     def comments
@@ -27,27 +31,25 @@ class EventFilter
     @params = if params
                 params.dup
               else
-                []#EventFilter.default_filter
+                [] # EventFilter.default_filter
               end
   end
 
   def apply_filter(events)
-    return events unless params.present?
+    return events if params.blank? || params == EventFilter.all
 
-    filter = params.dup
-
-    actions = []
-    actions << Event::PUSHED if filter.include? 'push'
-    actions << Event::MERGED if filter.include? 'merged'
-
-    if filter.include? 'team'
-      actions << Event::JOINED
-      actions << Event::LEFT
+    case params
+    when EventFilter.push
+      events.where(action: Event::PUSHED)
+    when EventFilter.merged
+      events.where(action: Event::MERGED)
+    when EventFilter.comments
+      events.where(action: Event::COMMENTED)
+    when EventFilter.team
+      events.where(action: [Event::JOINED, Event::LEFT, Event::EXPIRED])
+    when EventFilter.issue
+      events.where(action: [Event::CREATED, Event::UPDATED, Event::CLOSED, Event::REOPENED])
     end
-
-    actions << Event::COMMENTED if filter.include? 'comments'
-
-    events.where(action: actions)
   end
 
   def options(key)
@@ -63,6 +65,10 @@ class EventFilter
   end
 
   def active?(key)
-    params.include? key
+    if params.present?
+      params.include? key
+    else
+      key == EventFilter.all
+    end
   end
 end

@@ -11,6 +11,9 @@ module MergeRequests
       # empty diff during a manual merge
       close_merge_requests
       reload_merge_requests
+      reset_merge_when_pipeline_succeeds
+      mark_pending_todos_done
+      cache_merge_requests_closing_issues
 
       # Leave a system note if a branch was deleted/added
       if branch_added? || branch_removed?
@@ -18,6 +21,7 @@ module MergeRequests
       end
 
       comment_mr_with_commits
+      mark_mr_as_wip_from_commits
       execute_mr_web_hooks
 
       true
@@ -31,48 +35,57 @@ module MergeRequests
     # target branch manually
     def close_merge_requests
       commit_ids = @commits.map(&:id)
-      merge_requests = @project.merge_requests.opened.where(target_branch: @branch_name).to_a
-      merge_requests = merge_requests.select(&:last_commit)
+      merge_requests = @project.merge_requests.preload(:merge_request_diff).opened.where(target_branch: @branch_name).to_a
+      merge_requests = merge_requests.select(&:diff_head_commit)
 
       merge_requests = merge_requests.select do |merge_request|
-        commit_ids.include?(merge_request.last_commit.id)
+        commit_ids.include?(merge_request.diff_head_sha) &&
+          merge_request.merge_request_diff.state != 'empty'
       end
 
-      merge_requests.uniq.select(&:source_project).each do |merge_request|
-        MergeRequests::PostMergeService.
-          new(merge_request.target_project, @current_user).
-          execute(merge_request)
+      filter_merge_requests(merge_requests).each do |merge_request|
+        MergeRequests::PostMergeService
+          .new(merge_request.target_project, @current_user)
+          .execute(merge_request)
       end
     end
 
     def force_push?
-      Gitlab::ForcePushCheck.force_push?(@project, @oldrev, @newrev)
+      Gitlab::Checks::ForcePush.force_push?(@project, @oldrev, @newrev)
     end
 
     # Refresh merge request diff if we push to source or target branch of merge request
     # Note: we should update merge requests from forks too
     def reload_merge_requests
-      merge_requests = @project.merge_requests.opened.by_branch(@branch_name).to_a
-      merge_requests += fork_merge_requests.by_branch(@branch_name).to_a
-      merge_requests = filter_merge_requests(merge_requests)
+      merge_requests = @project.merge_requests.opened
+        .by_source_or_target_branch(@branch_name).to_a
 
-      merge_requests.each do |merge_request|
+      # Fork merge requests
+      merge_requests += MergeRequest.opened
+        .where(source_branch: @branch_name, source_project: @project)
+        .where.not(target_project: @project).to_a
 
+      filter_merge_requests(merge_requests).each do |merge_request|
         if merge_request.source_branch == @branch_name || force_push?
-          merge_request.reload_code
-          merge_request.mark_as_unchecked
+          merge_request.reload_diff(current_user)
         else
-          mr_commit_ids = merge_request.commits.map(&:id)
+          mr_commit_ids = merge_request.commit_shas
           push_commit_ids = @commits.map(&:id)
           matches = mr_commit_ids & push_commit_ids
-
-          if matches.any?
-            merge_request.reload_code
-            merge_request.mark_as_unchecked
-          else
-            merge_request.mark_as_unchecked
-          end
+          merge_request.reload_diff(current_user) if matches.any?
         end
+
+        merge_request.mark_as_unchecked
+      end
+    end
+
+    def reset_merge_when_pipeline_succeeds
+      merge_requests_for_source_branch.each(&:reset_merge_when_pipeline_succeeds)
+    end
+
+    def mark_pending_todos_done
+      merge_requests_for_source_branch.each do |merge_request|
+        todo_service.merge_request_push(merge_request, @current_user)
       end
     end
 
@@ -83,12 +96,10 @@ module MergeRequests
         merge_request = merge_requests_for_source_branch.first
         return unless merge_request
 
-        last_commit = merge_request.last_commit
-
         begin
           # Since any number of commits could have been made to the restored branch,
           # find the common root to see what has been added.
-          common_ref = @project.repository.merge_base(last_commit.id, @newrev)
+          common_ref = @project.repository.merge_base(merge_request.diff_head_sha, @newrev)
           # If the a commit no longer exists in this repo, gitlab_git throws
           # a Rugged::OdbError. This is fixed in https://gitlab.com/gitlab-org/gitlab_git/merge_requests/52
           @commits = @project.repository.commits_between(common_ref, @newrev) if common_ref
@@ -108,7 +119,7 @@ module MergeRequests
 
       merge_requests_for_source_branch.each do |merge_request|
         SystemNoteService.change_branch_presence(
-            merge_request, merge_request.project, @current_user,
+          merge_request, merge_request.project, @current_user,
             :source, @branch_name, presence)
       end
     end
@@ -118,7 +129,7 @@ module MergeRequests
       return unless @commits.present?
 
       merge_requests_for_source_branch.each do |merge_request|
-        mr_commit_ids = Set.new(merge_request.commits.map(&:id))
+        mr_commit_ids = Set.new(merge_request.commit_shas)
 
         new_commits, existing_commits = @commits.partition do |commit|
           mr_commit_ids.include?(commit.id)
@@ -130,10 +141,40 @@ module MergeRequests
       end
     end
 
+    def mark_mr_as_wip_from_commits
+      return unless @commits.present?
+
+      merge_requests_for_source_branch.each do |merge_request|
+        commit_shas = merge_request.commit_shas
+
+        wip_commit = @commits.detect do |commit|
+          commit.work_in_progress? && commit_shas.include?(commit.sha)
+        end
+
+        if wip_commit && !merge_request.work_in_progress?
+          merge_request.update(title: merge_request.wip_title)
+          SystemNoteService.add_merge_request_wip_from_commit(
+            merge_request,
+            merge_request.project,
+            @current_user,
+            wip_commit
+          )
+        end
+      end
+    end
+
     # Call merge request webhook with update branches
     def execute_mr_web_hooks
       merge_requests_for_source_branch.each do |merge_request|
-        execute_hooks(merge_request, 'update')
+        execute_hooks(merge_request, 'update', @oldrev)
+      end
+    end
+
+    # If the merge requests closes any issues, save this information in the
+    # `MergeRequestsClosingIssues` model (as a performance optimization).
+    def cache_merge_requests_closing_issues
+      @project.merge_requests.where(source_branch: @branch_name).each do |merge_request|
+        merge_request.cache_merge_request_closes_issues!(@current_user)
       end
     end
 
@@ -142,15 +183,7 @@ module MergeRequests
     end
 
     def merge_requests_for_source_branch
-      @source_merge_requests ||= begin
-        merge_requests = @project.origin_merge_requests.opened.where(source_branch: @branch_name).to_a
-        merge_requests += fork_merge_requests.where(source_branch: @branch_name).to_a
-        filter_merge_requests(merge_requests)
-      end
-    end
-
-    def fork_merge_requests
-      @fork_merge_requests ||= @project.fork_merge_requests.opened
+      @source_merge_requests ||= merge_requests_for(@branch_name)
     end
 
     def branch_added?

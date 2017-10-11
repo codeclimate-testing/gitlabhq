@@ -1,12 +1,11 @@
+- @hide_top_links = true
 - page_title    "Projects"
-- header_title  "Projects", root_path
+- header_title  "Projects", dashboard_projects_path
 
 - if current_user
   = render 'dashboard/projects_head'
 - else
   = render 'explore/head'
 
-.gray-content-block.clearfix
-  = render 'filter'
+= render 'explore/projects/nav'
 = render 'projects', projects: @projects
-= paginate @projects, theme: "gitlab"

@@ -1,32 +1,34 @@
+- breadcrumb_title "Repository"
+- @no_container = true
 - page_title "Edit", @blob.path, @ref
-= render "header_title"
+- content_for :page_specific_javascripts do
+  = page_specific_javascript_tag('lib/ace.js')
+  = page_specific_javascript_bundle_tag('blob')
 
-.file-editor
-  %ul.center-top-menu.no-bottom.js-edit-mode
-    %li.active
-      = link_to '#editor' do
-        %i.fa.fa-edit
-        Edit file
+%div{ class: container_class }
+  - if @conflict
+    .alert.alert-danger
+      Someone edited the file the same time you did. Please check out
+      = link_to "the file", project_blob_path(@project, tree_join(@branch_name, @file_path)), target: "_blank", rel: 'noopener noreferrer'
+      and make sure your changes will not unintentionally remove theirs.
+  .editor-title-row
+    %h3.page-title.blob-edit-page-title
+      Edit file
+    = render 'template_selectors'
+  .file-editor
+    %ul.nav-links.no-bottom.js-edit-mode
+      %li.active
+        = link_to '#editor' do
+          Write
 
-    %li
-      = link_to '#preview', 'data-preview-url' => namespace_project_preview_blob_path(@project.namespace, @project, @id) do
-        %i.fa.fa-eye
-        = editing_preview_title(@blob.name)
+      %li
+        = link_to '#preview', 'data-preview-url' => project_preview_blob_path(@project, @id) do
+          = editing_preview_title(@blob.name)
 
-  = form_tag(namespace_project_update_blob_path(@project.namespace, @project, @id), method: :put, class: 'form-horizontal js-requires-input') do
-    = render 'projects/blob/editor', ref: @ref, path: @path, blob_data: @blob.data
-    = render 'shared/commit_message_container', params: params, placeholder: "Update #{@blob.name}"
-
-    .form-group.branch
-      = label_tag 'branch', class: 'control-label' do
-        Branch
-      .col-sm-10
-        = text_field_tag 'new_branch', @ref, class: "form-control"
-
-    = hidden_field_tag 'last_commit', @last_commit
-    = hidden_field_tag 'content', '', id: "file-content"
-    = hidden_field_tag 'from_merge_request_id', params[:from_merge_request_id]
-    = render 'projects/commit_button', ref: @ref, cancel_path: @after_edit_path
-
-:javascript
-  blob = new EditBlob(gon.relative_url_root + "#{Gitlab::Application.config.assets.prefix}", "#{@blob.language.try(:ace_mode)}")
+    = form_tag(project_update_blob_path(@project, @id), method: :put, class: 'form-horizontal js-quick-submit js-requires-input js-edit-blob-form', data: blob_editor_paths) do
+      = render 'projects/blob/editor', ref: @ref, path: @path, blob_data: @blob.data
+      = render 'shared/new_commit_form', placeholder: "Update #{@blob.name}"
+      = hidden_field_tag 'last_commit_sha', @last_commit_sha
+      = hidden_field_tag 'content', '', id: "file-content"
+      = hidden_field_tag 'from_merge_request_iid', params[:from_merge_request_iid]
+      = render 'projects/commit_button', ref: @ref, cancel_path: project_blob_path(@project, @id)

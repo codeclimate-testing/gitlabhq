@@ -1,24 +1,34 @@
 require "spec_helper"
 
 describe ProjectWiki do
-  let(:project) { create(:empty_project) }
+  let(:project) { create(:project) }
   let(:repository) { project.repository }
   let(:user) { project.owner }
   let(:gitlab_shell) { Gitlab::Shell.new }
-  let(:project_wiki) { ProjectWiki.new(project, user) }
+  let(:project_wiki) { described_class.new(project, user) }
+  let(:raw_repository) { Gitlab::Git::Repository.new(project.repository_storage, subject.disk_path + '.git', 'foo') }
 
   subject { project_wiki }
-  before { project_wiki.wiki }
 
   describe "#path_with_namespace" do
     it "returns the project path with namespace with the .wiki extension" do
-      expect(subject.path_with_namespace).to eq(project.path_with_namespace + ".wiki")
+      expect(subject.path_with_namespace).to eq(project.full_path + '.wiki')
+    end
+
+    it 'returns the same value as #full_path' do
+      expect(subject.path_with_namespace).to eq(subject.full_path)
+    end
+  end
+
+  describe '#web_url' do
+    it 'returns the full web URL to the wiki' do
+      expect(subject.web_url).to eq("#{Gitlab.config.gitlab.url}/#{project.full_path}/wikis/home")
     end
   end
 
   describe "#url_to_repo" do
     it "returns the correct ssh url to the repo" do
-      expect(subject.url_to_repo).to eq(gitlab_shell.url_to_repo(subject.path_with_namespace))
+      expect(subject.url_to_repo).to eq(gitlab_shell.url_to_repo(subject.full_path))
     end
   end
 
@@ -29,16 +39,27 @@ describe ProjectWiki do
   end
 
   describe "#http_url_to_repo" do
-    it "provides the full http url to the repo" do
-      gitlab_url = Gitlab.config.gitlab.url
-      repo_http_url = "#{gitlab_url}/#{subject.path_with_namespace}.git"
-      expect(subject.http_url_to_repo).to eq(repo_http_url)
+    let(:project) { create :project }
+
+    it 'returns the full http url to the repo' do
+      expected_url = "#{Gitlab.config.gitlab.url}/#{subject.full_path}.git"
+
+      expect(project_wiki.http_url_to_repo).to eq(expected_url)
+      expect(project_wiki.http_url_to_repo).not_to include('@')
+    end
+  end
+
+  describe "#wiki_base_path" do
+    it "returns the wiki base path" do
+      wiki_base_path = "#{Gitlab.config.gitlab.relative_url_root}/#{project.full_path}/wikis"
+
+      expect(subject.wiki_base_path).to eq(wiki_base_path)
     end
   end
 
   describe "#wiki" do
-    it "contains a Gollum::Wiki instance" do
-      expect(subject.wiki).to be_a Gollum::Wiki
+    it "contains a Gitlab::Git::Wiki instance" do
+      expect(subject.wiki).to be_a Gitlab::Git::Wiki
     end
 
     it "creates a new wiki repo if one does not yet exist" do
@@ -46,20 +67,18 @@ describe ProjectWiki do
     end
 
     it "raises CouldNotCreateWikiError if it can't create the wiki repository" do
-      allow(project_wiki).to receive(:init_repo).and_return(false)
-      expect { project_wiki.send(:create_repo!) }.to raise_exception(ProjectWiki::CouldNotCreateWikiError)
+      # Create a fresh project which will not have a wiki
+      project_wiki = described_class.new(create(:project), user)
+      gitlab_shell = double(:gitlab_shell)
+      allow(gitlab_shell).to receive(:add_repository)
+      allow(project_wiki).to receive(:gitlab_shell).and_return(gitlab_shell)
+
+      expect { project_wiki.send(:wiki) }.to raise_exception(ProjectWiki::CouldNotCreateWikiError)
     end
   end
 
   describe "#empty?" do
     context "when the wiki repository is empty" do
-      before do
-        allow_any_instance_of(Gitlab::Shell).to receive(:add_repository) do
-          create_temp_repo("#{Rails.root}/tmp/test-git-base-path/non-existant.wiki.git")
-        end
-        allow(project).to receive(:path_with_namespace).and_return("non-existant")
-      end
-
       describe '#empty?' do
         subject { super().empty? }
         it { is_expected.to be_truthy }
@@ -129,15 +148,15 @@ describe ProjectWiki do
   describe '#find_file' do
     before do
       file = Gollum::File.new(subject.wiki)
-      allow_any_instance_of(Gollum::Wiki).
-                   to receive(:file).with('image.jpg', 'master', true).
-                   and_return(file)
-      allow_any_instance_of(Gollum::File).
-                   to receive(:mime_type).
-                   and_return('image/jpeg')
-      allow_any_instance_of(Gollum::Wiki).
-                   to receive(:file).with('non-existant', 'master', true).
-                   and_return(nil)
+      allow_any_instance_of(Gollum::Wiki)
+                   .to receive(:file).with('image.jpg', 'master')
+                   .and_return(file)
+      allow_any_instance_of(Gollum::File)
+                   .to receive(:mime_type)
+                   .and_return('image/jpeg')
+      allow_any_instance_of(Gollum::Wiki)
+                   .to receive(:file).with('non-existant', 'master')
+                   .and_return(nil)
     end
 
     after do
@@ -154,9 +173,9 @@ describe ProjectWiki do
       expect(subject.find_file('non-existant')).to eq(nil)
     end
 
-    it 'returns a Gollum::File instance' do
+    it 'returns a Gitlab::Git::WikiFile instance' do
       file = subject.find_file('image.jpg')
-      expect(file).to be_a Gollum::File
+      expect(file).to be_a Gitlab::Git::WikiFile
     end
   end
 
@@ -186,17 +205,25 @@ describe ProjectWiki do
     end
 
     it 'updates project activity' do
-      expect(subject).to receive(:update_project_activity)
-
       subject.create_page('Test Page', 'This is content')
+
+      project.reload
+
+      expect(project.last_activity_at).to be_within(1.minute).of(Time.now)
+      expect(project.last_repository_updated_at).to be_within(1.minute).of(Time.now)
     end
   end
 
   describe "#update_page" do
     before do
       create_page("update-page", "some content")
-      @gollum_page = subject.wiki.paged("update-page")
-      subject.update_page(@gollum_page, "some other content", :markdown, "updated page")
+      @gitlab_git_wiki_page = subject.wiki.page(title: "update-page")
+      subject.update_page(
+        @gitlab_git_wiki_page,
+        content: "some other content",
+        format: :markdown,
+        message: "updated page"
+      )
       @page = subject.pages.first.page
     end
 
@@ -213,16 +240,24 @@ describe ProjectWiki do
     end
 
     it 'updates project activity' do
-      expect(subject).to receive(:update_project_activity)
+      subject.update_page(
+        @gitlab_git_wiki_page,
+        content: 'Yet more content',
+        format: :markdown,
+        message: 'Updated page again'
+      )
 
-      subject.update_page(@gollum_page, 'Yet more content', :markdown, 'Updated page again')
+      project.reload
+
+      expect(project.last_activity_at).to be_within(1.minute).of(Time.now)
+      expect(project.last_repository_updated_at).to be_within(1.minute).of(Time.now)
     end
   end
 
   describe "#delete_page" do
     before do
       create_page("index", "some content")
-      @page = subject.wiki.paged("index")
+      @page = subject.wiki.page(title: "index")
     end
 
     it "deletes the page" do
@@ -231,9 +266,50 @@ describe ProjectWiki do
     end
 
     it 'updates project activity' do
-      expect(subject).to receive(:update_project_activity)
-
       subject.delete_page(@page)
+
+      project.reload
+
+      expect(project.last_activity_at).to be_within(1.minute).of(Time.now)
+      expect(project.last_repository_updated_at).to be_within(1.minute).of(Time.now)
+    end
+  end
+
+  describe '#create_repo!' do
+    it 'creates a repository' do
+      expect(raw_repository.exists?).to eq(false)
+      expect(subject.repository).to receive(:after_create)
+
+      subject.send(:create_repo!, raw_repository)
+
+      expect(raw_repository.exists?).to eq(true)
+    end
+  end
+
+  describe '#ensure_repository' do
+    it 'creates the repository if it not exist' do
+      expect(raw_repository.exists?).to eq(false)
+
+      expect(subject).to receive(:create_repo!).and_call_original
+      subject.ensure_repository
+
+      expect(raw_repository.exists?).to eq(true)
+    end
+
+    it 'does not create the repository if it exists' do
+      subject.wiki
+      expect(raw_repository.exists?).to eq(true)
+
+      expect(subject).not_to receive(:create_repo!)
+
+      subject.ensure_repository
+    end
+  end
+
+  describe '#hook_attrs' do
+    it 'returns a hash with values' do
+      expect(subject.hook_attrs).to be_a Hash
+      expect(subject.hook_attrs.keys).to contain_exactly(:web_url, :git_ssh_url, :git_http_url, :path_with_namespace, :default_branch)
     end
   end
 
@@ -249,7 +325,7 @@ describe ProjectWiki do
   end
 
   def commit_details
-    { name: user.name, email: user.email, message: "test commit" }
+    Gitlab::Git::Wiki::CommitDetails.new(user.name, user.email, "test commit")
   end
 
   def create_page(name, content)
@@ -257,6 +333,6 @@ describe ProjectWiki do
   end
 
   def destroy_page(page)
-    subject.wiki.delete_page(page, commit_details)
+    subject.delete_page(page, commit_details)
   end
 end

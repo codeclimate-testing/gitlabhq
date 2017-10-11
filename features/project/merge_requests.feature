@@ -1,3 +1,4 @@
+@project_merge_requests
 Feature: Project Merge Requests
   Background:
     Given I sign in as a user
@@ -23,27 +24,51 @@ Feature: Project Merge Requests
   Scenario: I should see target branch when it is different from default
     Given project "Shop" have "Bug NS-06" open merge request
     When I visit project "Shop" merge requests page
-    Then I should see "other_branch" branch
+    Then I should see "feature_conflict" branch
 
+  @javascript
+  Scenario: I should not see the numbers of diverged commits if the branch is rebased on the target
+    Given project "Shop" have "Bug NS-07" open merge request with rebased branch
+    When I visit merge request page "Bug NS-07"
+    Then I should not see the diverged commits count
+
+  @javascript
+  Scenario: I should see the numbers of diverged commits if the branch diverged from the target
+    Given project "Shop" have "Bug NS-08" open merge request with diverged branch
+    When I visit merge request page "Bug NS-08"
+    Then I should see the diverged commits count
+
+  @javascript
   Scenario: I should see rejected merge requests
     Given I click link "Closed"
     Then I should see "Feature NS-03" in merge requests
     And I should not see "Bug NS-04" in merge requests
 
+  @javascript
   Scenario: I should see all merge requests
     Given I click link "All"
     Then I should see "Feature NS-03" in merge requests
     And I should see "Bug NS-04" in merge requests
 
-  Scenario: I visit merge request page
+  @javascript
+  Scenario: I visit an open merge request page
     Given I click link "Bug NS-04"
     Then I should see merge request "Bug NS-04"
 
+  @javascript
+  Scenario: I visit a merged merge request page
+    Given project "Shop" have "Feature NS-05" merged merge request
+    And I click link "Merged"
+    And I click link "Feature NS-05"
+    Then I should see merge request "Feature NS-05"
+
+  @javascript
   Scenario: I close merge request page
     Given I click link "Bug NS-04"
     And I click link "Close"
     Then I should see closed merge request "Bug NS-04"
 
+  @javascript
   Scenario: I reopen merge request page
     Given I click link "Bug NS-04"
     And I click link "Close"
@@ -51,28 +76,41 @@ Feature: Project Merge Requests
     When I click link "Reopen"
     Then I should see reopened merge request "Bug NS-04"
 
+  @javascript
   Scenario: I submit new unassigned merge request
     Given I click link "New Merge Request"
     And I submit new merge request "Wiki Feature"
     Then I should see merge request "Wiki Feature"
-
-  Scenario: I download a diff on a public merge request
-    Given public project "Community"
-    And "John Doe" owns public project "Community"
-    And project "Community" has "Bug CO-01" open merge request with diffs inside
-    Given I logout directly
-    And I visit merge request page "Bug CO-01"
-    And I click on "Email Patches"
-    Then I should see a patch diff
-    And I visit merge request page "Bug CO-01"
-    And I click on "Plain Diff"
-    Then I should see a patch diff
 
   @javascript
   Scenario: I comment on a merge request
     Given I visit merge request page "Bug NS-04"
     And I leave a comment like "XML attached"
     Then I should see comment "XML attached"
+
+  @javascript
+  Scenario: Visiting Merge Requests after being sorted the list
+    Given I visit project "Shop" merge requests page
+    And I sort the list by "Last updated"
+    And I visit my project's home page
+    And I visit project "Shop" merge requests page
+    Then The list should be sorted by "Last updated"
+
+  @javascript
+  Scenario: Visiting Merge Requests from a different Project after sorting
+    Given I visit project "Shop" merge requests page
+    And I sort the list by "Last updated"
+    And I visit dashboard merge requests page
+    Then The list should be sorted by "Last updated"
+
+  @javascript
+  Scenario: Sort merge requests by upvotes
+    Given project "Shop" have "Bug NS-05" open merge request with diffs inside
+    And project "Shop" have "Bug NS-06" open merge request
+    And merge request "Bug NS-04" have 2 upvotes and 1 downvote
+    And merge request "Bug NS-06" have 1 upvote and 2 downvotes
+    And I sort the list by "Popularity"
+    Then The list should be sorted by "Popularity"
 
   @javascript
   Scenario: I comment on a merge request diff
@@ -82,6 +120,37 @@ Feature: Project Merge Requests
     And I leave a comment like "Line is wrong" on diff
     And I switch to the merge request's comments tab
     Then I should see a discussion has started on diff
+    And I should see a badge of "1" next to the discussion link
+
+  @javascript
+  Scenario: I see a new comment on merge request diff from another user in the discussion tab
+    Given project "Shop" have "Bug NS-05" open merge request with diffs inside
+    And I visit merge request page "Bug NS-05"
+    And user "John Doe" leaves a comment like "Line is wrong" on diff
+    Then I should see a discussion by user "John Doe" has started on diff
+    And I should see a badge of "1" next to the discussion link
+
+  @javascript
+  Scenario: I edit a comment on a merge request diff
+    Given project "Shop" have "Bug NS-05" open merge request with diffs inside
+    And I visit merge request page "Bug NS-05"
+    And I click on the Changes tab
+    And I leave a comment like "Line is wrong" on diff
+    And I change the comment "Line is wrong" to "Typo, please fix" on diff
+    Then I should not see a diff comment saying "Line is wrong"
+    And I should see a diff comment saying "Typo, please fix"
+
+  @javascript
+  Scenario: I delete a comment on a merge request diff
+    Given project "Shop" have "Bug NS-05" open merge request with diffs inside
+    And I visit merge request page "Bug NS-05"
+    And I click on the Changes tab
+    And I leave a comment like "Line is wrong" on diff
+    And I should see a badge of "1" next to the discussion link
+    And I delete the comment "Line is wrong" on diff
+    And I click on the Discussion tab
+    Then I should not see any discussion
+    And I should see a badge of "0" next to the discussion link
 
   @javascript
   Scenario: I comment on a line of a commit in merge request
@@ -113,6 +182,7 @@ Feature: Project Merge Requests
 
   # Markdown
 
+  @javascript
   Scenario: Headers inside the description should have ids generated for them.
     When I visit merge request page "Bug NS-04"
     Then Header "Description header" should have correct id and link
@@ -174,6 +244,15 @@ Feature: Project Merge Requests
     Then I should see additional file lines
 
   @javascript
+  Scenario: I unfold diff in Side-by-Side view
+    Given project "Shop" have "Bug NS-05" open merge request with diffs inside
+    And I visit merge request page "Bug NS-05"
+    And I click on the Changes tab
+    And I click Side-by-side Diff tab
+    And I unfold diff
+    Then I should see additional file lines
+
+  @javascript
   Scenario: I show comments on a merge request side-by-side diff with comments in multiple files
     Given project "Shop" have "Bug NS-05" open merge request with diffs inside
     And I visit merge request page "Bug NS-05"
@@ -222,13 +301,6 @@ Feature: Project Merge Requests
     Then I should see the Markdown write tab
 
   @javascript
-  Scenario: I search merge request
-    Given I click link "All"
-    When I fill in merge request search with "Fe"
-    Then I should see "Feature NS-03" in merge requests
-    And I should not see "Bug NS-04" in merge requests
-
-  @javascript
   Scenario: I can unsubscribe from merge request
     Given I visit merge request page "Bug NS-04"
     Then I should see that I am subscribed
@@ -242,3 +314,11 @@ Feature: Project Merge Requests
     When I click the "Target branch" dropdown
     And I select a new target branch
     Then I should see new target branch changes
+
+  @javascript
+  Scenario: I can close merge request after commenting
+    Given I visit merge request page "Bug NS-04"
+    And I leave a comment like "XML attached"
+    Then I should see comment "XML attached"
+    And I click link "Close"
+    Then I should see closed merge request "Bug NS-04"

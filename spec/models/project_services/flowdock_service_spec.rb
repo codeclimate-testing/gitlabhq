@@ -1,23 +1,3 @@
-# == Schema Information
-#
-# Table name: services
-#
-#  id                    :integer          not null, primary key
-#  type                  :string(255)
-#  title                 :string(255)
-#  project_id            :integer
-#  created_at            :datetime
-#  updated_at            :datetime
-#  active                :boolean          default(FALSE), not null
-#  properties            :text
-#  template              :boolean          default(FALSE)
-#  push_events           :boolean          default(TRUE)
-#  issues_events         :boolean          default(TRUE)
-#  merge_requests_events :boolean          default(TRUE)
-#  tag_push_events       :boolean          default(TRUE)
-#  note_events           :boolean          default(TRUE), not null
-#
-
 require 'spec_helper'
 
 describe FlowdockService do
@@ -26,24 +6,42 @@ describe FlowdockService do
     it { is_expected.to have_one :service_hook }
   end
 
+  describe 'Validations' do
+    context 'when service is active' do
+      before do
+        subject.active = true
+      end
+
+      it { is_expected.to validate_presence_of(:token) }
+    end
+
+    context 'when service is inactive' do
+      before do
+        subject.active = false
+      end
+
+      it { is_expected.not_to validate_presence_of(:token) }
+    end
+  end
+
   describe "Execute" do
     let(:user)    { create(:user) }
-    let(:project) { create(:project) }
+    let(:project) { create(:project, :repository) }
 
     before do
-      @flowdock_service = FlowdockService.new
+      @flowdock_service = described_class.new
       allow(@flowdock_service).to receive_messages(
         project_id: project.id,
         project: project,
         service_hook: true,
         token: 'verySecret'
       )
-      @sample_data = Gitlab::PushDataBuilder.build_sample(project, user)
+      @sample_data = Gitlab::DataBuilder::Push.build_sample(project, user)
       @api_url = 'https://api.flowdock.com/v1/messages'
       WebMock.stub_request(:post, @api_url)
     end
 
-    it "should call FlowDock API" do
+    it "calls FlowDock API" do
       @flowdock_service.execute(@sample_data)
       @sample_data[:commits].each do |commit|
         # One request to Flowdock per new commit

@@ -1,111 +1,151 @@
 module API
   module Helpers
-    PRIVATE_TOKEN_HEADER = "HTTP_PRIVATE_TOKEN"
-    PRIVATE_TOKEN_PARAM = :private_token
-    SUDO_HEADER ="HTTP_SUDO"
+    include Gitlab::Utils
+    include Helpers::Pagination
+
+    UnauthorizedError = Class.new(StandardError)
+
+    SUDO_HEADER = "HTTP_SUDO".freeze
     SUDO_PARAM = :sudo
 
-    def parse_boolean(value)
-      [ true, 1, '1', 't', 'T', 'true', 'TRUE', 'on', 'ON' ].include?(value)
+    def declared_params(options = {})
+      options = { include_parent_namespaces: false }.merge(options)
+      declared(params, options).to_h.symbolize_keys
+    end
+
+    def check_unmodified_since!(last_modified)
+      if_unmodified_since = Time.parse(headers['If-Unmodified-Since']) rescue nil
+
+      if if_unmodified_since && last_modified && last_modified > if_unmodified_since
+        render_api_error!('412 Precondition Failed', 412)
+      end
+    end
+
+    def destroy_conditionally!(resource, last_updated: nil)
+      last_updated ||= resource.updated_at
+
+      check_unmodified_since!(last_updated)
+
+      status 204
+      if block_given?
+        yield resource
+      else
+        resource.destroy
+      end
     end
 
     def current_user
-      private_token = (params[PRIVATE_TOKEN_PARAM] || env[PRIVATE_TOKEN_HEADER]).to_s
-      @current_user ||= (User.find_by(authentication_token: private_token) || doorkeeper_guard)
+      return @current_user if defined?(@current_user)
 
-      unless @current_user && Gitlab::UserAccess.allowed?(@current_user)
-        return nil
-      end
+      @current_user = initial_current_user
 
-      identifier = sudo_identifier()
+      Gitlab::I18n.locale = @current_user&.preferred_language
 
-      # If the sudo is the current user do nothing
-      if identifier && !(@current_user.id == identifier || @current_user.username == identifier)
-        render_api_error!('403 Forbidden: Must be admin to use sudo', 403) unless @current_user.is_admin?
-        @current_user = User.by_username_or_id(identifier)
-        not_found!("No user id or username for: #{identifier}") if @current_user.nil?
-      end
+      sudo!
 
       @current_user
     end
 
-    def sudo_identifier()
-      identifier ||= params[SUDO_PARAM] ||= env[SUDO_HEADER]
+    def sudo?
+      initial_current_user != current_user
+    end
 
-      # Regex for integers
-      if !!(identifier =~ /^[0-9]+$/)
-        identifier.to_i
-      else
-        identifier
-      end
+    def user_group
+      @group ||= find_group!(params[:id])
     end
 
     def user_project
-      @project ||= find_project(params[:id])
-      @project || not_found!("Project")
+      @project ||= find_project!(params[:id])
+    end
+
+    def wiki_page
+      page = user_project.wiki.find_page(params[:slug])
+
+      page || not_found!('Wiki Page')
+    end
+
+    def available_labels
+      @available_labels ||= LabelsFinder.new(current_user, project_id: user_project.id).execute
+    end
+
+    def find_user(id)
+      if id =~ /^\d+$/
+        User.find_by(id: id)
+      else
+        User.find_by(username: id)
+      end
     end
 
     def find_project(id)
-      project = Project.find_with_namespace(id) || Project.find_by(id: id)
+      if id =~ /^\d+$/
+        Project.find_by(id: id)
+      else
+        Project.find_by_full_path(id)
+      end
+    end
 
-      if project && can?(current_user, :read_project, project)
+    def find_project!(id)
+      project = find_project(id)
+
+      if can?(current_user, :read_project, project)
         project
       else
-        nil
-      end
-    end
-
-    def project_service
-      @project_service ||= begin
-        underscored_service = params[:service_slug].underscore
-
-        if Service.available_services_names.include?(underscored_service)
-          user_project.build_missing_services
-
-          service_method = "#{underscored_service}_service"
-
-          send_service(service_method)
-        end
-      end
-
-      @project_service || not_found!("Service")
-    end
-
-    def send_service(service_method)
-      user_project.send(service_method)
-    end
-
-    def service_attributes
-      @service_attributes ||= project_service.fields.inject([]) do |arr, hash|
-        arr << hash[:name].to_sym
+        not_found!('Project')
       end
     end
 
     def find_group(id)
-      begin
-        group = Group.find(id)
-      rescue ActiveRecord::RecordNotFound
-        group = Group.find_by!(path: id)
+      if id.to_s =~ /^\d+$/
+        Group.find_by(id: id)
+      else
+        Group.find_by_full_path(id)
       end
+    end
+
+    def find_group!(id)
+      group = find_group(id)
 
       if can?(current_user, :read_group, group)
         group
       else
-        forbidden!("#{current_user.username} lacks sufficient "\
-        "access to #{group.name}")
+        not_found!('Group')
       end
     end
 
-    def paginate(relation)
-      per_page  = params[:per_page].to_i
-      paginated = relation.page(params[:page]).per(per_page)
-      add_pagination_headers(paginated, per_page)
+    def find_project_label(id)
+      label = available_labels.find_by_id(id) || available_labels.find_by_title(id)
+      label || not_found!('Label')
+    end
 
-      paginated
+    def find_project_issue(iid)
+      IssuesFinder.new(current_user, project_id: user_project.id).find_by!(iid: iid)
+    end
+
+    def find_project_merge_request(iid)
+      MergeRequestsFinder.new(current_user, project_id: user_project.id).find_by!(iid: iid)
+    end
+
+    def find_project_snippet(id)
+      finder_params = { project: user_project }
+      SnippetsFinder.new(current_user, finder_params).execute.find(id)
+    end
+
+    def find_merge_request_with_access(iid, access_level = :read_merge_request)
+      merge_request = user_project.merge_requests.find_by!(iid: iid)
+      authorize! access_level, merge_request
+      merge_request
+    end
+
+    def find_build!(id)
+      user_project.builds.find(id.to_i)
     end
 
     def authenticate!
       unauthorized! unless current_user
+    end
+
+    def authenticate_non_get!
+      authenticate! unless %w[GET HEAD].include?(route.request_method)
     end
 
     def authenticate_by_gitlab_shell_token!
@@ -116,13 +156,12 @@ module API
     end
 
     def authenticated_as_admin!
-      forbidden! unless current_user.is_admin?
+      authenticate!
+      forbidden! unless current_user.admin?
     end
 
-    def authorize!(action, subject)
-      unless abilities.allowed?(current_user, action, subject)
-        forbidden!
-      end
+    def authorize!(action, subject = :global)
+      forbidden! unless can?(current_user, action, subject)
     end
 
     def authorize_push_project
@@ -133,14 +172,22 @@ module API
       authorize! :admin_project, user_project
     end
 
+    def authorize_read_builds!
+      authorize! :read_build, user_project
+    end
+
+    def authorize_update_builds!
+      authorize! :update_build, user_project
+    end
+
     def require_gitlab_workhorse!
       unless env['HTTP_GITLAB_WORKHORSE'].present?
         forbidden!('Request should be executed via GitLab Workhorse')
       end
     end
 
-    def can?(object, action, subject)
-      abilities.allowed?(object, action, subject)
+    def can?(object, action, subject = :global)
+      Ability.allowed?(object, action, subject)
     end
 
     # Checks the occurrences of required attributes, each attribute must be present in the params hash
@@ -155,56 +202,22 @@ module API
     end
 
     def attributes_for_keys(keys, custom_params = nil)
+      params_hash = custom_params || params
       attrs = {}
       keys.each do |key|
-        if params[key].present? or (params.has_key?(key) and params[key] == false)
-          attrs[key] = params[key]
+        if params_hash[key].present? || (params_hash.key?(key) && params_hash[key] == false)
+          attrs[key] = params_hash[key]
         end
       end
       ActionController::Parameters.new(attrs).permit!
     end
 
-    # Helper method for validating all labels against its names
-    def validate_label_params(params)
-      errors = {}
-
-      if params[:labels].present?
-        params[:labels].split(',').each do |label_name|
-          label = user_project.labels.create_with(
-            color: Label::DEFAULT_COLOR).find_or_initialize_by(
-              title: label_name.strip)
-
-          if label.invalid?
-            errors[label.title] = label.errors
-          end
-        end
-      end
-
-      errors
-    end
-
-    def validate_access_level?(level)
-      Gitlab::Access.options_with_owner.values.include? level.to_i
-    end
-
-    def issuable_order_by
-      if params["order_by"] == 'updated_at'
-        'updated_at'
-      else
-        'created_at'
-      end
-    end
-
-    def issuable_sort
-      if params["sort"] == 'asc'
-        :asc
-      else
-        :desc
-      end
-    end
-
     def filter_by_iid(items, iid)
       items.where(iid: iid)
+    end
+
+    def filter_by_search(items, text)
+      items.search(text)
     end
 
     # error helpers
@@ -217,7 +230,7 @@ module API
 
     def bad_request!(attribute)
       message = ["400 (Bad request)"]
-      message << "\"" + attribute.to_s + "\" not given"
+      message << "\"" + attribute.to_s + "\" not given" if attribute
       render_api_error!(message.join(' '), 400)
     end
 
@@ -244,61 +257,85 @@ module API
       render_api_error!('413 Request Entity Too Large', 413)
     end
 
+    def not_modified!
+      render_api_error!('304 Not Modified', 304)
+    end
+
+    def no_content!
+      render_api_error!('204 No Content', 204)
+    end
+
+    def accepted!
+      render_api_error!('202 Accepted', 202)
+    end
+
     def render_validation_error!(model)
       if model.errors.any?
         render_api_error!(model.errors.messages || '400 Bad Request', 400)
       end
     end
 
+    def render_spam_error!
+      render_api_error!({ error: 'Spam detected' }, 400)
+    end
+
     def render_api_error!(message, status)
-      error!({ 'message' => message }, status)
+      error!({ 'message' => message }, status, header)
     end
 
-    # Projects helpers
-
-    def filter_projects(projects)
-      # If the archived parameter is passed, limit results accordingly
-      if params[:archived].present?
-        projects = projects.where(archived: parse_boolean(params[:archived]))
+    def handle_api_exception(exception)
+      if sentry_enabled? && report_exception?(exception)
+        define_params_for_grape_middleware
+        sentry_context
+        Raven.capture_exception(exception)
       end
 
-      if params[:search].present?
-        projects = projects.search(params[:search])
-      end
+      # lifted from https://github.com/rails/rails/blob/master/actionpack/lib/action_dispatch/middleware/debug_exceptions.rb#L60
+      trace = exception.backtrace
 
-      if params[:ci_enabled_first].present?
-        projects.includes(:gitlab_ci_service).
-          reorder("services.active DESC, projects.#{project_order_by} #{project_sort}")
-      else
-        projects.reorder(project_order_by => project_sort)
-      end
+      message = "\n#{exception.class} (#{exception.message}):\n"
+      message << exception.annoted_source_code.to_s if exception.respond_to?(:annoted_source_code)
+      message << "  " << trace.join("\n  ")
+
+      API.logger.add Logger::FATAL, message
+
+      response_message =
+        if Rails.env.test?
+          message
+        else
+          '500 Internal Server Error'
+        end
+
+      rack_response({ 'message' => response_message }.to_json, 500)
     end
 
-    def project_order_by
-      order_fields = %w(id name path created_at updated_at last_activity_at)
+    # project helpers
 
-      if order_fields.include?(params['order_by'])
-        params['order_by']
-      else
-        'created_at'
-      end
+    def reorder_projects(projects)
+      projects.reorder(params[:order_by] => params[:sort])
     end
 
-    def project_sort
-      if params["sort"] == 'asc'
-        :asc
-      else
-        :desc
-      end
+    def project_finder_params
+      finder_params = {}
+      finder_params[:owned] = true if params[:owned].present?
+      finder_params[:non_public] = true if params[:membership].present?
+      finder_params[:starred] = true if params[:starred].present?
+      finder_params[:visibility_level] = Gitlab::VisibilityLevel.level_value(params[:visibility]) if params[:visibility]
+      finder_params[:archived] = params[:archived]
+      finder_params[:search] = params[:search] if params[:search]
+      finder_params[:user] = params.delete(:user) if params[:user]
+      finder_params
     end
 
     # file helpers
 
-    def uploaded_file!(field, uploads_path)
+    def uploaded_file(field, uploads_path)
       if params[field]
-        bad_request!("#{field} is not a file") unless params[field].respond_to?(:filename)
+        bad_request!("#{field} is not a file") unless params[field][:filename]
         return params[field]
       end
+
+      return nil unless params["#{field}.path"] && params["#{field}.name"]
 
       # sanitize file paths
       # this requires all paths to exist
@@ -310,7 +347,7 @@ module API
       UploadedFile.new(
         file_path,
         params["#{field}.name"],
-        params["#{field}.type"] || 'application/octet-stream',
+        params["#{field}.type"] || 'application/octet-stream'
       )
     end
 
@@ -326,39 +363,138 @@ module API
         header['X-Sendfile'] = path
         body
       else
-        file FileStreamer.new(path)
+        file path
+      end
+    end
+
+    def present_artifacts!(artifacts_file)
+      return not_found! unless artifacts_file.exists?
+
+      if artifacts_file.file_storage?
+        present_file!(artifacts_file.path, artifacts_file.filename)
+      else
+        redirect_to(artifacts_file.url)
       end
     end
 
     private
 
-    def add_pagination_headers(paginated, per_page)
-      request_url = request.url.split('?').first
-
-      links = []
-      links << %(<#{request_url}?page=#{paginated.current_page - 1}&per_page=#{per_page}>; rel="prev") unless paginated.first_page?
-      links << %(<#{request_url}?page=#{paginated.current_page + 1}&per_page=#{per_page}>; rel="next") unless paginated.last_page?
-      links << %(<#{request_url}?page=1&per_page=#{per_page}>; rel="first")
-      links << %(<#{request_url}?page=#{paginated.total_pages}&per_page=#{per_page}>; rel="last")
-
-      header 'Link', links.join(', ')
+    def private_token
+      params[APIGuard::PRIVATE_TOKEN_PARAM] || env[APIGuard::PRIVATE_TOKEN_HEADER]
     end
 
-    def abilities
-      @abilities ||= begin
-                       abilities = Six.new
-                       abilities << Ability
-                       abilities
-                     end
+    def warden
+      env['warden']
+    end
+
+    # Check if the request is GET/HEAD, or if CSRF token is valid.
+    def verified_request?
+      Gitlab::RequestForgeryProtection.verified?(env)
+    end
+
+    # Check the Rails session for valid authentication details
+    def find_user_from_warden
+      warden.try(:authenticate) if verified_request?
+    end
+
+    def initial_current_user
+      return @initial_current_user if defined?(@initial_current_user)
+
+      begin
+        @initial_current_user = Gitlab::Auth::UniqueIpsLimiter.limit_user! { find_current_user }
+      rescue APIGuard::UnauthorizedError, UnauthorizedError
+        unauthorized!
+      end
+    end
+
+    def find_current_user
+      user =
+        find_user_by_private_token(scopes: scopes_registered_for_endpoint) ||
+        doorkeeper_guard(scopes: scopes_registered_for_endpoint) ||
+        find_user_from_warden
+
+      return nil unless user
+
+      raise UnauthorizedError unless Gitlab::UserAccess.new(user).allowed? && user.can?(:access_api)
+
+      user
+    end
+
+    def sudo!
+      return unless sudo_identifier
+      return unless initial_current_user
+
+      unless initial_current_user.admin?
+        forbidden!('Must be admin to use sudo')
+      end
+
+      # Only private tokens should be used for the SUDO feature
+      unless private_token == initial_current_user.private_token
+        forbidden!('Private token must be specified in order to use sudo')
+      end
+
+      sudoed_user = find_user(sudo_identifier)
+
+      if sudoed_user
+        @current_user = sudoed_user
+      else
+        not_found!("No user id or username for: #{sudo_identifier}")
+      end
+    end
+
+    def sudo_identifier
+      @sudo_identifier ||= params[SUDO_PARAM] || env[SUDO_HEADER]
     end
 
     def secret_token
-      File.read(Gitlab.config.gitlab_shell.secret_file).chomp
+      Gitlab::Shell.secret_token
     end
 
-    def handle_member_errors(errors)
-      error!(errors[:access_level], 422) if errors[:access_level].any?
-      not_found!(errors)
+    def send_git_blob(repository, blob)
+      env['api.format'] = :txt
+      content_type 'text/plain'
+      header(*Gitlab::Workhorse.send_git_blob(repository, blob))
+    end
+
+    def send_git_archive(repository, ref:, format:)
+      header(*Gitlab::Workhorse.send_git_archive(repository, ref: ref, format: format))
+    end
+
+    def send_artifacts_entry(build, entry)
+      header(*Gitlab::Workhorse.send_artifacts_entry(build, entry))
+    end
+
+    # The Grape Error Middleware only has access to `env` but not `params` nor
+    # `request`. We workaround this by defining methods that returns the right
+    # values.
+    def define_params_for_grape_middleware
+      self.define_singleton_method(:request) { Rack::Request.new(env) }
+      self.define_singleton_method(:params) { request.params.symbolize_keys }
+    end
+
+    # We could get a Grape or a standard Ruby exception. We should only report anything that
+    # is clearly an error.
+    def report_exception?(exception)
+      return true unless exception.respond_to?(:status)
+
+      exception.status == 500
+    end
+
+    # An array of scopes that were registered (using `allow_access_with_scope`)
+    # for the current endpoint class. It also returns scopes registered on
+    # `API::API`, since these are meant to apply to all API routes.
+    def scopes_registered_for_endpoint
+      @scopes_registered_for_endpoint ||=
+        begin
+          endpoint_classes = [options[:for].presence, ::API::API].compact
+          endpoint_classes.reduce([]) do |memo, endpoint|
+            if endpoint.respond_to?(:allowed_scopes)
+              memo.concat(endpoint.allowed_scopes)
+            else
+              memo
+            end
+          end
+        end
     end
   end
 end

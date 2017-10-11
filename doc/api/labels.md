@@ -1,84 +1,225 @@
-# Labels
+# Labels API
 
 ## List labels
 
-Get all labels for given project.
+Get all labels for a given project.
 
 ```
 GET /projects/:id/labels
 ```
 
+| Attribute | Type    | Required | Description           |
+| --------- | ------- | -------- | --------------------- |
+| `id`      | integer/string    | yes      | The ID or [URL-encoded path of the project](README.md#namespaced-path-encoding) owned by the authenticated user |
+
+```bash
+curl --header "PRIVATE-TOKEN: 9koXpg98eAheJpvBs5tK" https://gitlab.example.com/api/v4/projects/1/labels
+```
+
+Example response:
+
 ```json
 [
-    {
-        "name": "Awesome",
-        "color": "#DD10AA"
-    },
-    {
-        "name": "Documentation",
-        "color": "#1E80DD"
-    },
-    {
-        "name": "Feature",
-        "color": "#11FF22"
-    },
-    {
-        "name": "Bug",
-        "color": "#EE1122"
-    }
+  {
+    "id" : 1,
+    "name" : "bug",
+    "color" : "#d9534f",
+    "description": "Bug reported by user",
+    "open_issues_count": 1,
+    "closed_issues_count": 0,
+    "open_merge_requests_count": 1,
+    "subscribed": false,
+    "priority": 10
+  },
+  {
+    "id" : 4,
+    "color" : "#d9534f",
+    "name" : "confirmed",
+    "description": "Confirmed issue",
+    "open_issues_count": 2,
+    "closed_issues_count": 5,
+    "open_merge_requests_count": 0,
+    "subscribed": false,
+    "priority": null
+  },
+  {
+    "id" : 7,
+    "name" : "critical",
+    "color" : "#d9534f",
+    "description": "Critical issue. Need fix ASAP",
+    "open_issues_count": 1,
+    "closed_issues_count": 3,
+    "open_merge_requests_count": 1,
+    "subscribed": false,
+    "priority": null
+  },
+  {
+    "id" : 8,
+    "name" : "documentation",
+    "color" : "#f0ad4e",
+    "description": "Issue about documentation",
+    "open_issues_count": 1,
+    "closed_issues_count": 0,
+    "open_merge_requests_count": 2,
+    "subscribed": false,
+    "priority": null
+  },
+  {
+    "id" : 9,
+    "color" : "#5cb85c",
+    "name" : "enhancement",
+    "description": "Enhancement proposal",
+    "open_issues_count": 1,
+    "closed_issues_count": 0,
+    "open_merge_requests_count": 1,
+    "subscribed": true,
+    "priority": null
+  }
 ]
 ```
 
 ## Create a new label
 
-Creates a new label for given repository with given name and color.
+Creates a new label for the given repository with the given name and color.
 
 ```
 POST /projects/:id/labels
 ```
 
-Parameters:
+| Attribute     | Type    | Required | Description                  |
+| ------------- | ------- | -------- | ---------------------------- |
+| `id`      | integer/string    | yes      | The ID or [URL-encoded path of the project](README.md#namespaced-path-encoding) owned by the authenticated user |
+| `name`        | string  | yes      | The name of the label        |
+| `color`       | string  | yes      | The color of the label given in 6-digit hex notation with leading '#' sign (e.g. #FFAABB) or one of the [CSS color names](https://developer.mozilla.org/en-US/docs/Web/CSS/color_value#Color_keywords) |
+| `description` | string  | no       | The description of the label |
+| `priority`    | integer | no       | The priority of the label. Must be greater or equal than zero or `null` to remove the priority. |
 
-- `id` (required) - The ID of a project
-- `name` (required) - The name of the label
-- `color` (required) -  Color of the label given in 6-digit hex notation with leading '#' sign (e.g. #FFAABB)
+```bash
+curl --data "name=feature&color=#5843AD" --header "PRIVATE-TOKEN: 9koXpg98eAheJpvBs5tK" "https://gitlab.example.com/api/v4/projects/1/labels"
+```
 
-It returns 200 and the newly created label, if the operation succeeds.
-If the label already exists, 409 and an error message is returned.
-If label parameters are invalid, 400 and an explaining error message is returned.
+Example response:
+
+```json
+{
+  "id" : 10,
+  "name" : "feature",
+  "color" : "#5843AD",
+  "description":null,
+  "open_issues_count": 0,
+  "closed_issues_count": 0,
+  "open_merge_requests_count": 0,
+  "subscribed": false,
+  "priority": null
+}
+```
 
 ## Delete a label
 
-Deletes a label given by its name.
+Deletes a label with a given name.
 
 ```
 DELETE /projects/:id/labels
 ```
 
-- `id` (required) - The ID of a project
-- `name` (required) - The name of the label to be deleted
+| Attribute | Type    | Required | Description           |
+| --------- | ------- | -------- | --------------------- |
+| `id`      | integer/string    | yes      | The ID or [URL-encoded path of the project](README.md#namespaced-path-encoding) owned by the authenticated user |
+| `name`    | string  | yes      | The name of the label |
 
-It returns 200 if the label successfully was deleted, 400 for wrong parameters
-and 404 if the label does not exist.
-In case of an error, additionally an error message is returned.
+```bash
+curl --request DELETE --header "PRIVATE-TOKEN: 9koXpg98eAheJpvBs5tK" "https://gitlab.example.com/api/v4/projects/1/labels?name=bug"
+```
 
 ## Edit an existing label
 
-Updates an existing label with new name or now color. At least one parameter
+Updates an existing label with new name or new color. At least one parameter
 is required, to update the label.
 
 ```
 PUT /projects/:id/labels
 ```
 
-Parameters:
+| Attribute       | Type    | Required                          | Description                      |
+| --------------- | ------- | --------------------------------- | -------------------------------  |
+| `id`      | integer/string    | yes      | The ID or [URL-encoded path of the project](README.md#namespaced-path-encoding) owned by the authenticated user |
+| `name`          | string  | yes                               | The name of the existing label   |
+| `new_name`      | string  | yes if `color` is not provided    | The new name of the label        |
+| `color`         | string  | yes if `new_name` is not provided | The color of the label given in 6-digit hex notation with leading '#' sign (e.g. #FFAABB) or one of the [CSS color names](https://developer.mozilla.org/en-US/docs/Web/CSS/color_value#Color_keywords) |
+| `description`   | string  | no                                | The new description of the label |
+| `priority`    | integer | no       | The new priority of the label. Must be greater or equal than zero or `null` to remove the priority. |
 
-- `id` (required) - The ID of a project
-- `name` (required) - The name of the existing label
-- `new_name` (optional) - The new name of the label
-- `color` (optional) -  New color of the label given in 6-digit hex notation with leading '#' sign (e.g. #FFAABB)
 
-On success, this method returns 200 with the updated label.
-If required parameters are missing or parameters are invalid, 400 is returned.
-If the label to be updated is missing, 404 is returned.
-In case of an error, additionally an error message is returned.
+```bash
+curl --request PUT --data "name=documentation&new_name=docs&color=#8E44AD&description=Documentation" --header "PRIVATE-TOKEN: 9koXpg98eAheJpvBs5tK" "https://gitlab.example.com/api/v4/projects/1/labels"
+```
+
+Example response:
+
+```json
+{
+  "id" : 8,
+  "name" : "docs",
+  "color" : "#8E44AD",
+  "description": "Documentation",
+  "open_issues_count": 1,
+  "closed_issues_count": 0,
+  "open_merge_requests_count": 2,
+  "subscribed": false,
+  "priority": null
+}
+```
+
+## Subscribe to a label
+
+Subscribes the authenticated user to a label to receive notifications.
+If the user is already subscribed to the label, the status code `304`
+is returned.
+
+```
+POST /projects/:id/labels/:label_id/subscribe
+```
+
+| Attribute  | Type              | Required | Description                          |
+| ---------- | ----------------- | -------- | ------------------------------------ |
+| `id`      | integer/string    | yes      | The ID or [URL-encoded path of the project](README.md#namespaced-path-encoding) owned by the authenticated user |
+| `label_id` | integer or string | yes      | The ID or title of a project's label |
+
+```bash
+curl --request POST --header "PRIVATE-TOKEN: 9koXpg98eAheJpvBs5tK" https://gitlab.example.com/api/v4/projects/5/labels/1/subscribe
+```
+
+Example response:
+
+```json
+{
+  "id" : 1,
+  "name" : "bug",
+  "color" : "#d9534f",
+  "description": "Bug reported by user",
+  "open_issues_count": 1,
+  "closed_issues_count": 0,
+  "open_merge_requests_count": 1,
+  "subscribed": true,
+  "priority": null
+}
+```
+
+## Unsubscribe from a label
+
+Unsubscribes the authenticated user from a label to not receive notifications
+from it. If the user is not subscribed to the label, the
+status code `304` is returned.
+
+```
+POST /projects/:id/labels/:label_id/unsubscribe
+```
+
+| Attribute  | Type              | Required | Description                          |
+| ---------- | ----------------- | -------- | ------------------------------------ |
+| `id`      | integer/string    | yes      | The ID or [URL-encoded path of the project](README.md#namespaced-path-encoding) owned by the authenticated user |
+| `label_id` | integer or string | yes      | The ID or title of a project's label |
+
+```bash
+curl --request POST --header "PRIVATE-TOKEN: 9koXpg98eAheJpvBs5tK" https://gitlab.example.com/api/v4/projects/5/labels/1/unsubscribe
+```

@@ -8,49 +8,68 @@ class ProfilesController < Profiles::ApplicationController
   def show
   end
 
-  def applications
-    @applications = current_user.oauth_applications
-    @authorized_tokens = current_user.oauth_authorized_tokens
-    @authorized_anonymous_tokens = @authorized_tokens.reject(&:application)
-    @authorized_apps = @authorized_tokens.map(&:application).uniq - [nil]
-  end
-
   def update
-    user_params.except!(:email) if @user.ldap_user?
-
-    if @user.update_attributes(user_params)
-      flash[:notice] = "Profile was successfully updated"
-    else
-      messages = @user.errors.full_messages.uniq.join('. ')
-      flash[:alert] = "Failed to update profile. #{messages}"
-    end
-
     respond_to do |format|
-      format.html { redirect_back_or_default(default: { action: 'show' }) }
+      result = Users::UpdateService.new(current_user, user_params.merge(user: @user)).execute
+
+      if result[:status] == :success
+        message = "Profile was successfully updated"
+
+        format.html { redirect_back_or_default(default: { action: 'show' }, options: { notice: message }) }
+        format.json { render json: { message: message } }
+      else
+        format.html { redirect_back_or_default(default: { action: 'show' }, options: { alert: result[:message] }) }
+        format.json { render json: result }
+      end
     end
   end
 
   def reset_private_token
-    if current_user.reset_authentication_token!
-      flash[:notice] = "Token was successfully updated"
+    Users::UpdateService.new(current_user, user: @user).execute! do |user|
+      user.reset_authentication_token!
     end
+
+    flash[:notice] = "Private token was successfully reset"
+
+    redirect_to profile_account_path
+  end
+
+  def reset_incoming_email_token
+    Users::UpdateService.new(current_user, user: @user).execute! do |user|
+      user.reset_incoming_email_token!
+    end
+
+    flash[:notice] = "Incoming email token was successfully reset"
+
+    redirect_to profile_account_path
+  end
+
+  def reset_rss_token
+    Users::UpdateService.new(current_user, user: @user).execute! do |user|
+      user.reset_rss_token!
+    end
+
+    flash[:notice] = "RSS token was successfully reset"
 
     redirect_to profile_account_path
   end
 
   def audit_log
-    @events = AuditEvent.where(entity_type: "User", entity_id: current_user.id).
-      order("created_at DESC").
-      page(params[:page]).
-      per(PER_PAGE)
+    @events = AuditEvent.where(entity_type: "User", entity_id: current_user.id)
+      .order("created_at DESC")
+      .page(params[:page])
   end
 
   def update_username
-    @user.update_attributes(username: user_params[:username])
+    result = Users::UpdateService.new(current_user, user: @user, username: user_params[:username]).execute
 
-    respond_to do |format|
-      format.js
-    end
+    options = if result[:status] == :success
+                { notice: "Username successfully changed" }
+              else
+                { alert: "Username change failed - #{result[:message]}" }
+              end
+
+    redirect_back_or_default(default: { action: 'show' }, options: options)
   end
 
   private
@@ -64,12 +83,13 @@ class ProfilesController < Profiles::ApplicationController
   end
 
   def user_params
-    params.require(:user).permit(
+    @user_params ||= params.require(:user).permit(
       :avatar,
       :bio,
       :email,
       :hide_no_password,
       :hide_no_ssh_key,
+      :hide_project_limit,
       :linkedin,
       :location,
       :name,
@@ -79,7 +99,9 @@ class ProfilesController < Profiles::ApplicationController
       :skype,
       :twitter,
       :username,
-      :website_url
+      :website_url,
+      :organization,
+      :preferred_language
     )
   end
 end

@@ -1,47 +1,46 @@
-# == Schema Information
-#
-# Table name: keys
-#
-#  id          :integer          not null, primary key
-#  user_id     :integer
-#  created_at  :datetime
-#  updated_at  :datetime
-#  key         :text
-#  title       :string(255)
-#  type        :string(255)
-#  fingerprint :string(255)
-#  public      :boolean          default(FALSE), not null
-#
-
 require 'digest/md5'
 
 class Key < ActiveRecord::Base
+  include Gitlab::CurrentSettings
   include Sortable
 
   belongs_to :user
 
-  before_validation :strip_white_space, :generate_fingerprint
+  before_validation :generate_fingerprint
 
-  validates :title, presence: true, length: { within: 0..255 }
-  validates :key, presence: true, length: { within: 0..5000 }, format: { with: /\A(ssh|ecdsa)-.*\Z/ }, uniqueness: true
-  validates :key, format: { without: /\n|\r/, message: 'should be a single line' }
-  validates :fingerprint, uniqueness: true, presence: { message: 'cannot be generated' }
+  validates :title,
+    presence: true,
+    length: { maximum: 255 }
+
+  validates :key,
+    presence: true,
+    length: { maximum: 5000 },
+    format: { with: /\A(ssh|ecdsa)-.*\Z/ }
+
+  validates :fingerprint,
+    uniqueness: true,
+    presence: { message: 'cannot be generated' }
+
+  validate :key_meets_restrictions
 
   delegate :name, :email, to: :user, prefix: true
 
-  after_create :add_to_shell
-  after_create :notify_user
+  after_commit :add_to_shell, on: :create
   after_create :post_create_hook
-  after_destroy :remove_from_shell
+  after_commit :remove_from_shell, on: :destroy
   after_destroy :post_destroy_hook
 
-  def strip_white_space
-    self.key = key.strip unless key.blank?
+  def key=(value)
+    value&.delete!("\n\r")
+    value.strip! unless value.blank?
+    write_attribute(:key, value)
+    @public_key = nil
   end
 
   def publishable_key
-    #Removes anything beyond the keytype and key itself
-    self.key.split[0..1].join(' ')
+    # Strip out the keys comment so we don't leak email addresses
+    # Replace with simple ident of user_name (hostname)
+    self.key.split[0..1].push("#{self.user_name} (#{Gitlab.config.gitlab.host})").join(' ')
   end
 
   # projects that has this key
@@ -53,16 +52,16 @@ class Key < ActiveRecord::Base
     "key-#{id}"
   end
 
+  def update_last_used_at
+    Keys::LastUsedService.new(self).execute
+  end
+
   def add_to_shell
     GitlabShellWorker.perform_async(
       :add_key,
       shell_id,
       key
     )
-  end
-
-  def notify_user
-    NotificationService.new.new_key(self)
   end
 
   def post_create_hook
@@ -73,12 +72,16 @@ class Key < ActiveRecord::Base
     GitlabShellWorker.perform_async(
       :remove_key,
       shell_id,
-      key,
+      key
     )
   end
 
   def post_destroy_hook
     SystemHooksService.new.execute_hooks_for(self, :destroy)
+  end
+
+  def public_key
+    @public_key ||= Gitlab::SSHPublicKey.new(key)
   end
 
   private
@@ -88,6 +91,26 @@ class Key < ActiveRecord::Base
 
     return unless self.key.present?
 
-    self.fingerprint = Gitlab::KeyFingerprint.new(self.key).fingerprint
+    self.fingerprint = public_key.fingerprint
+  end
+
+  def key_meets_restrictions
+    restriction = current_application_settings.key_restriction_for(public_key.type)
+
+    if restriction == ApplicationSetting::FORBIDDEN_KEY_VALUE
+      errors.add(:key, forbidden_key_type_message)
+    elsif public_key.bits < restriction
+      errors.add(:key, "must be at least #{restriction} bits")
+    end
+  end
+
+  def forbidden_key_type_message
+    allowed_types =
+      current_application_settings
+        .allowed_key_types
+        .map(&:upcase)
+        .to_sentence(last_word_connector: ', or ', two_words_connector: ' or ')
+
+    "type is forbidden. Must be #{allowed_types}"
   end
 end

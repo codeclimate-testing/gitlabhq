@@ -1,17 +1,5 @@
 ---
 engines:
-  bundler-audit:
-    enabled: true
-  csslint:
-    enabled: true
-  coffeelint:
-    enabled: true
-  eslint:
-    enabled: true
-  fixme:
-    enabled: true
-  rubocop:
-    enabled: true
   duplication:
     enabled: true
     config:
